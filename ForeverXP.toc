@@ -1,0 +1,8 @@
+## Interface: 16001, 120100, 120000
+## Title: |cff8ee6deForeverXP|r
+## Notes: Visual XP bar - aurora design, quest XP, rested bonus, XP/hour, time to level, session time.
+## Author: Yurri Studio
+## Version: 0.5.0
+## SavedVariables: ForeverXPDB
+X-Curse-Project-ID: 1701700
+ForeverXP.lua
