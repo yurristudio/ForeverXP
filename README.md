@@ -1,4 +1,4 @@
-# XPBar 0.5.0
+# ForeverXP 0.5.1
 
 Visual XP bar for World of Warcraft: Forever with an "aurora" look:
 teal-to-violet gradient fill, amber segment for quest XP sitting unclaimed in
@@ -16,7 +16,14 @@ World of Warcraft/_classic_beta_/Interface/AddOns/XPBar/
 `/reload` or relog. Upgrading from 0.4.0: the color palette is reset once and
 the removed Played Time option is dropped; everything else is kept.
 
-## What's new in 0.5.0
+## What's new in 0.5.1
+
+## What's new in 0.5.1
+
+- **Fix: Settings saving issues.** Addressed a problem where settings (such as hiding the default Blizzard XP bar) were lost after quitting the game to the desktop or typing `/reload`. The addon now correctly re-applies these settings upon logging back in.
+- **New Feature: Auto Accept/Turn-in Quests.** Added an option to automatically accept and turn in quests to speed up leveling. If you want to read the quest text, simply hold down **Shift** while interacting with the NPC to temporarily pause the automation.
+  
+## What was new in 0.5.0
 
 - **Settings now persist** across `/reload` and relog (SavedVariables are now
   attached on `ADDON_LOADED`; the old code wrote into a table the game threw
