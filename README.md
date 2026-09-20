@@ -1,3 +1,10 @@
+## What's new in 0.5.2
+
+- **Layout Adjustments:** Redesigned text positioning to prevent UI collisions when scaling. The center text (Current/Max XP) is now locked to a highly visible, shadow-backed size. The "Next LVL" estimation has been moved inside the bar, seamlessly appended next to your current level.
+- **Custom Text Coloring & Scaling:** The "Completed Quests" and "Rested XP" values under the bar are now distinctly color-coded (Yellow and Blue) for immediate visual feedback. You can now resize this specific text independently from the rest of the bar using the new "Bottom Quests/Rested Size" slider in the Adjust tab.
+- **New Feature: Auto Questing.** Added a toggle to automatically accept and turn in quests to accelerate leveling. Hold **Shift** while interacting with an NPC to temporarily pause the automation if you want to read the lore.
+- **Fix: Persistent UI Hiding.** The "Hide Default Experience Bar" option now hooks aggressively into the Blizzard UI frame manager, ensuring the default bar stays hidden even after completely exiting and relaunching the game.
+
 # ForeverXP 0.5.1
 
 Visual XP bar for World of Warcraft: Forever with an "aurora" look:
