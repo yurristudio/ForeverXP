@@ -1,39 +1,22 @@
 --[[
-  ForeverXP 0.5.1
+  ForeverXP 0.5.2
 
   A visual XP bar with an "aurora" design: teal-to-violet gradient fill,
   amber quest segment, mint rested segment, soft glow and a glass edge.
 
-  Text ON the bar (three slots):
-    LEFT   - XP per hour (leveling speed)
-    CENTER - Completed & Rested segment percentages
-    RIGHT  - Session time (resets at every login, survives /reload)
-  Text UNDER the bar (left side):
-    Estimated time to the next level, from XP/hour, XP left and bar total.
+  Text ON the bar:
+    LEFT   - Current Level & Next LVL ETA (Resizable)
+    CENTER - Current XP / Max XP (Fixed solid size)
+    RIGHT  - Current % and total % with quests (Resizable)
+  Text UNDER the bar:
+    LEFT   - XP per hour (Main Size)
+    CENTER - Completed Quests % & Rested XP % (Independent Size)
+    RIGHT  - Session time (Main Size)
 
   CONTROLS:
   - Minimap button (XP icon): left-click = settings, right-click =
     lock/unlock the bar, drag = move the button.
   - Settings panel (ElvUI style): Options / Adjust / Info tabs.
-
-  WHAT CHANGED IN 0.5.1
-  - Settings could still be lost on /reload on beta clients with
-    nonstandard SavedVariables timing (game injects the saved table after
-    ADDON_LOADED, or swaps it in later). The DB now re-syncs with the
-    game's ForeverXPDB global once per second: whatever table the game
-    hands us is adopted (with our live edits moved into it), and if the
-    game never provides one we publish ours so /reload has something to
-    write.
-
-  WHAT CHANGED IN 0.5.0
-  - Settings now persist. SavedVariables are loaded by the game AFTER this
-    file has run, so the old code kept writing into a table that was thrown
-    away. The DB is now attached on ADDON_LOADED.
-  - XP/hour no longer depends on the /played reply. Time on the level is
-    tracked locally (and saved), /played is only used to correct it.
-  - Settings panel was transparent because it lacked BackdropTemplate.
-  - Played Time removed. Session Time starts from 0 at every login.
-  - New: time-to-level estimate, text size + bold/normal, XP minimap icon.
 ]]
 
 local ADDON_NAME = ...
@@ -46,19 +29,20 @@ local DB_VERSION = 2
 
 local defaults = {
 	point = "TOP", relPoint = "TOP", x = 0, y = -150,
-	width = 300, height = 20,
+	width = 400, height = 20,
 	locked = false,
 	showQuestSegment = true,
 	showRestedSegment = true,
-	showBottomText = true,        -- center slot: completed & rested
-	showLevelingText = true,      -- left slot: XP per hour
-	showTimeLeftText = true,      -- under the bar: time to next level
-	showSessionTimeText = true,   -- right slot: session time
+	showBottomText = true,        -- under center: quests & rested
+	showLevelingText = true,      -- under left: XP per hour
+	showTimeLeftText = true,      -- appended next to level: time to next level
+	showSessionTimeText = true,   -- under right: session time
 	showBarAtMaxLevel = false,
 	hideDefaultXPBar = false,
 	autoQuest = false,            -- auto accept/turn-in quests
 	autoSaveOnClose = true,       -- closing the settings panel after a change prints a /reload reminder
-	fontSize = 11,
+	fontSize = 11,                -- Size for side text
+	bottomFontSize = 11,          -- Independent size for bottom center text
 	fontBold = false,
 	minimapPos = 225,             -- angle around the minimap
 	chars = {},                   -- per-character level timing (for XP/hour)
@@ -91,22 +75,8 @@ local function deepMergeDefaults(dst, src)
 	end
 end
 
--- SAVED VARIABLES TIMING (why this looks paranoid):
--- On a normal client the game injects ForeverXPDB right before ADDON_LOADED.
--- 0.5.0 handled that - and it still wasn't enough here, because this beta
--- client can also (a) inject the saved table only AFTER ADDON_LOADED, or
--- (b) swap the global for its own stale copy later. In both cases we wrote
--- our settings into a table the game never serializes, and /reload brought
--- back old values (most visible on the Adjust sliders, since every other
--- setting defaults to "on").
---
--- So the DB is now self-healing: syncSavedVars() runs once a second and
--- whenever we init. If the game's table exists and isn't the one we're
--- writing to, we ADOPT it - moving our live edits over the stale values -
--- and from then on everything writes where the game actually saves. If the
--- game never provides a table, we publish ours under the global name.
 local db = deepCopy(defaults)
-local defaultsSnapshot = deepCopy(defaults) -- never mutated; dirty detector
+local defaultsSnapshot = deepCopy(defaults)
 local dbReady = false
 
 local function deepEqual(a, b)
@@ -121,12 +91,9 @@ local function deepEqual(a, b)
 	return true
 end
 
--- SECOND COPY. Everything is also mirrored into a per-character saved file
--- (ForeverXPCharDB, see the .toc). If the account-wide file is not handed
--- back to us on this client, the newer of the two copies wins.
-local everAdopted = false   -- the game gave us a saved table at some point
+local everAdopted = false
 local restoredFromBackup = false
-local needRefresh = false   -- UI must be repainted after a late restore
+local needRefresh = false
 
 local function mirrorToBackup()
 	if not dbReady then return end
@@ -145,13 +112,6 @@ local function restoreFromBackup()
 	return true
 end
 
--- EXTRA COPIES in places that do not depend on SavedVariables at all (on this
--- client the saved file is written but never handed back). The user-adjustable
--- settings are packed into one short string, e.g.
---   b=1583;f=15;h=43;m=225;p=TOP;r=TOP;w=600;x=64.2;y=-10.0
--- and kept in (1) a custom CVar - survives /reload - and (2) a macro named
--- "ForeverXPData" - survives quitting the game, because macros are stored by
--- the game itself. Both are rewritten within a second of any change.
 local CVAR_NAME  = "foreverxpSettings"
 local MACRO_NAME = "ForeverXPData"
 local MACRO_TAG  = "#fxp "
@@ -161,7 +121,8 @@ local cvarLast, macroLast
 local worldEntered, macroWait = false, 0
 
 local CV_NUM = {
-	w = { "width", 60, 600, "%.0f" }, h = { "height", 8, 60, "%.0f" }, f = { "fontSize", 8, 24, "%.0f" },
+	w = { "width", 60, 800, "%.0f" }, h = { "height", 8, 60, "%.0f" }, f = { "fontSize", 8, 24, "%.0f" }, 
+	z = { "bottomFontSize", 8, 24, "%.0f" },
 	x = { "x", -5000, 5000, "%.1f" }, y = { "y", -5000, 5000, "%.1f" }, m = { "minimapPos", -720, 720, "%.0f" },
 }
 local CV_STR  = { p = "point", r = "relPoint" }
@@ -187,7 +148,6 @@ local function encodeSettings()
 	return table.concat(parts, ";")
 end
 
--- returns how many values were applied
 local function applyEncoded(str)
 	local n = 0
 	for k, v in string.gmatch(str or "", "([^;=]+)=([^;]*)") do
@@ -214,7 +174,6 @@ local function applyEncoded(str)
 	return n
 end
 
--- CVar ---------------------------------------------------------------
 local function cvarGet()
 	local f = (C_CVar and C_CVar.GetCVar) or GetCVar
 	if not f then return nil end
@@ -248,7 +207,6 @@ local function cvarWrite()
 	if set and pcall(set, CVAR_NAME, enc) then cvarLast = enc end
 end
 
--- Macro --------------------------------------------------------------
 local function macroRead()
 	if not GetMacroInfo then return nil end
 	local ok, name, _, body = pcall(GetMacroInfo, MACRO_NAME)
@@ -256,11 +214,10 @@ local function macroRead()
 	return nil
 end
 
--- Called from the 1s ticker until it has run once after login.
 local function macroLoad()
 	if macroLoaded or not dbReady or not worldEntered then return false end
 	macroWait = macroWait + 1
-	if macroWait < 3 then return false end -- give the game time to load macros
+	if macroWait < 3 then return false end
 	if not GetMacroInfo then
 		macroStatus = "unavailable"
 		macroLoaded = true
@@ -308,15 +265,9 @@ local function syncSavedVars()
 	local g = rawget(_G, "ForeverXPDB")
 	if g == nil then g = _G.ForeverXPDB end
 	if type(g) ~= "table" then
-		-- The game hasn't handed us a saved table (yet). Do NOT publish ours
-		-- here: some clients only inject the saved data when the global is
-		-- still empty, and an early publish would block it for good. Ours is
-		-- published at logout (and as a late fallback, see the ticker).
 		return
 	end
 	if g == db then return end
-	-- adopt the game's table, keeping our live edits (anything that no
-	-- longer equals the defaults) over the stale saved copy
 	for k, v in pairs(db) do
 		if g[k] == nil or not deepEqual(v, defaultsSnapshot[k]) then
 			g[k] = v
@@ -331,17 +282,17 @@ local function syncSavedVars()
 end
 
 local function initDB()
-	syncSavedVars() -- adopt the injected table if the game already gave it
+	syncSavedVars()
 	if (db.dbVersion or 0) < DB_VERSION then
-		db.colors = nil             -- new palette
-		db.showPlayedTimeText = nil -- feature removed
-		db.sessionStart = nil       -- session is no longer stored that way
+		db.colors = nil
+		db.showPlayedTimeText = nil
+		db.sessionStart = nil
 		db.dbVersion = DB_VERSION
 	end
 	deepMergeDefaults(db, defaults)
 	dbReady = true
 	restoreFromBackup()
-	cvarInit() -- freshest source: overrides both saved files
+	cvarInit()
 end
 
 --------------------------------------------------------------------
@@ -417,7 +368,6 @@ local function formatXPAmount(v)
 	return tostring(math.floor(v + 0.5))
 end
 
--- "<1m", "42m", "3h 05m", "2d 4h"
 local function formatETA(seconds)
 	if not seconds or seconds ~= seconds or seconds == math.huge then return nil end
 	if seconds < 60 then return "<1m" end
@@ -433,13 +383,9 @@ end
 
 --------------------------------------------------------------------
 -- 4. XP/hour tracking + session
---
--- We keep our own "time spent on this level" counter (saved per
--- character) instead of relying on the /played reply, which sometimes
--- never arrives. /played, when it does arrive, just corrects the counter.
 --------------------------------------------------------------------
 
-local track          -- record for the current character/level
+local track
 local charKey
 local lastTickAt
 local playedStamp = 0
@@ -455,8 +401,6 @@ local function ensureTrack()
 	end
 	local rec = db.chars[charKey]
 	if not rec or rec.level ~= level then
-		-- new level (or first run): start counting; keep the last known
-		-- speed so the display never falls back to "--" after a level-up
 		rec = {
 			level = level,
 			secs = 0,
@@ -543,7 +487,6 @@ local bar = CreateFrame("Frame", "ForeverXPBarFrame", main)
 bar:SetSize(db.width, db.height)
 bar:SetPoint("TOP", main, "TOP", 0, -PAD)
 
--- Soft outer glow behind the bar
 local glow = bar:CreateTexture(nil, "BACKGROUND", nil, -1)
 glow:SetPoint("CENTER", bar, "CENTER", 0, 0)
 glow:SetSize(db.width + 8, db.height + 8)
@@ -560,12 +503,10 @@ local function paintGlow()
 	end
 end
 
--- Background (the "remaining" portion)
 local bg = bar:CreateTexture(nil, "BACKGROUND")
 bg:SetAllPoints(bar)
 bg:SetColorTexture(unpack(db.colors.bg))
 
--- Gradient fill (current XP)
 local fill = bar:CreateTexture(nil, "ARTWORK", nil, 1)
 fill:SetPoint("LEFT", bar, "LEFT", 0, 0)
 fill:SetHeight(db.height)
@@ -581,21 +522,18 @@ local function paintFill()
 	end
 end
 
--- Amber segment (unclaimed quest XP)
 local quest = bar:CreateTexture(nil, "ARTWORK", nil, 2)
 quest:SetPoint("LEFT", fill, "RIGHT", 0, 0)
 quest:SetHeight(db.height)
 quest:SetWidth(0.001)
 quest:SetColorTexture(unpack(db.colors.quest))
 
--- Mint segment (rested bonus)
 local rested = bar:CreateTexture(nil, "ARTWORK", nil, 3)
 rested:SetPoint("LEFT", quest, "RIGHT", 0, 0)
 rested:SetHeight(db.height)
 rested:SetWidth(0.001)
 rested:SetColorTexture(unpack(db.colors.rested))
 
--- Glass sheen + bottom shadow
 local sheen = bar:CreateTexture(nil, "ARTWORK", nil, 5)
 sheen:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
 sheen:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
@@ -608,7 +546,6 @@ shadow:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
 shadow:SetHeight(2)
 shadow:SetColorTexture(0, 0, 0, 0.30)
 
--- Thin separators so segments read distinctly
 local function makeDivider(anchorTo)
 	local d = bar:CreateTexture(nil, "ARTWORK", nil, 4)
 	d:SetPoint("LEFT", anchorTo, "RIGHT", -1, 0)
@@ -620,49 +557,81 @@ local divQuest = makeDivider(fill)
 local divRested = makeDivider(quest)
 
 --------------------------------------------------------------------
--- 6. Bar text (three slots on the bar + time-to-level under it)
+-- 6. Bar text (Luxthos layout)
 --------------------------------------------------------------------
 
 local BAR_FONT = "Fonts\\FRIZQT__.TTF"
-local barTexts = {}
+local resizableTexts = {}
+local onBarTexts = {}
+local underCenterText 
 
 local function fontFlags()
 	return db.fontBold and "THICKOUTLINE" or "OUTLINE"
 end
 
-local function barFont(parent)
+local function onBarFont(parent)
+	local fs = parent:CreateFontString(nil, "OVERLAY")
+	fs:SetFont(BAR_FONT, 13, "OUTLINE")
+	fs:SetTextColor(1, 1, 1, 1)
+	fs:SetShadowColor(0, 0, 0, 0.8)
+	fs:SetShadowOffset(1, -1)
+	onBarTexts[#onBarTexts + 1] = fs
+	return fs
+end
+
+local function resizableFont(parent)
 	local fs = parent:CreateFontString(nil, "OVERLAY")
 	fs:SetFont(BAR_FONT, db.fontSize, fontFlags())
 	fs:SetTextColor(1, 1, 1, 1)
-	barTexts[#barTexts + 1] = fs
+	resizableTexts[#resizableTexts + 1] = fs
 	return fs
 end
 
 local function applyFonts()
 	local size = clamp(db.fontSize or 11, 8, 24)
-	for _, fs in ipairs(barTexts) do
+	local bottomSize = clamp(db.bottomFontSize or 11, 8, 24)
+	
+	for _, fs in ipairs(resizableTexts) do
 		fs:SetFont(BAR_FONT, size, fontFlags())
+	end
+	
+	if underCenterText then
+		underCenterText:SetFont(BAR_FONT, bottomSize, fontFlags())
+	end
+	
+	for _, fs in ipairs(onBarTexts) do
+		fs:SetFont(BAR_FONT, 13, "OUTLINE")
 	end
 end
 
--- LEFT: XP per hour
-local leftText = barFont(bar)
-leftText:SetPoint("LEFT", bar, "LEFT", 7, 0)
-leftText:SetJustifyH("LEFT")
+-- ON BAR TEXT (Resizable)
+local onLeftText = resizableFont(bar)
+onLeftText:SetPoint("LEFT", bar, "LEFT", 7, 0)
+onLeftText:SetJustifyH("LEFT")
 
--- CENTER: Completed & Rested
-local centerText = barFont(bar)
-centerText:SetPoint("CENTER", bar, "CENTER", 0, 0)
+-- CENTER TEXT (Fixed Size)
+local onCenterText = onBarFont(bar)
+onCenterText:SetPoint("CENTER", bar, "CENTER", 0, 0)
 
--- RIGHT: Session time
-local rightText = barFont(bar)
-rightText:SetPoint("RIGHT", bar, "RIGHT", -7, 0)
-rightText:SetJustifyH("RIGHT")
+local onRightText = resizableFont(bar)
+onRightText:SetPoint("RIGHT", bar, "RIGHT", -7, 0)
+onRightText:SetJustifyH("RIGHT")
 
--- UNDER THE BAR, LEFT: time to next level
-local timeText = barFont(bar)
-timeText:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 1, -5)
-timeText:SetJustifyH("LEFT")
+-- UNDER BAR TEXT
+local underLeftText = resizableFont(bar)
+underLeftText:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 1, -5)
+underLeftText:SetJustifyH("LEFT")
+
+-- Isolated Under Center Text for Independent Scaling
+underCenterText = bar:CreateFontString(nil, "OVERLAY")
+underCenterText:SetFont(BAR_FONT, db.bottomFontSize or 11, fontFlags())
+underCenterText:SetTextColor(1, 1, 1, 1)
+underCenterText:SetPoint("TOP", bar, "BOTTOM", 0, -5)
+underCenterText:SetJustifyH("CENTER")
+
+local underRightText = resizableFont(bar)
+underRightText:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", -1, -5)
+underRightText:SetJustifyH("RIGHT")
 
 --------------------------------------------------------------------
 -- 7. Update logic
@@ -685,10 +654,14 @@ update = function()
 		rested:SetWidth(0.001)
 		divQuest:Hide()
 		divRested:Hide()
-		leftText:SetText("")
-		centerText:SetText(xpDisabled and "Experience Disabled" or ("Level " .. level .. " - Max Level"))
-		rightText:SetText("")
-		timeText:SetText("")
+		
+		onLeftText:SetText("Level " .. level)
+		onCenterText:SetText(xpDisabled and "Experience Disabled" or "Max Level")
+		onRightText:SetText("")
+		
+		underLeftText:SetText("")
+		underCenterText:SetText("")
+		underRightText:SetText("")
 		return
 	end
 	main:Show()
@@ -699,10 +672,12 @@ update = function()
 	local questXP = db.showQuestSegment and getQuestLogPendingXP() or 0
 
 	if xpMax <= 0 then
-		leftText:SetText("")
-		centerText:SetText("--")
-		rightText:SetText("")
-		timeText:SetText("")
+		onLeftText:SetText("Level " .. level)
+		onCenterText:SetText("--")
+		onRightText:SetText("")
+		underLeftText:SetText("")
+		underCenterText:SetText("")
+		underRightText:SetText("")
 		return
 	end
 
@@ -718,48 +693,55 @@ update = function()
 	divQuest:SetShown(questFrac > 0)
 	divRested:SetShown(restedFrac > 0)
 
+	-- ON BAR TEXT POPULATION
 	local xpPerHour = getXPPerHour(xp)
-
-	-- LEFT: XP per hour
-	if db.showLevelingText then
-		leftText:SetText(xpPerHour and (formatXPAmount(xpPerHour) .. " XP/h") or "-- XP/h")
-	else
-		leftText:SetText("")
+	local etaStr = ""
+	
+	if db.showTimeLeftText and xpPerHour and xpPerHour > 0 then
+		local xpLeft = math.max(0, xpMax - xp)
+		local eta = formatETA(xpLeft / xpPerHour * 3600)
+		if eta then
+			etaStr = "   |cFFFFD200Next LVL: ~" .. eta .. "|r"
+		end
 	end
 
-	-- CENTER: Completed & Rested
+	onLeftText:SetText("Level " .. level .. etaStr)
+	onCenterText:SetText(xp .. " / " .. xpMax)
+	
+	local pct = fillFrac * 100
+	if questFrac > 0 then
+		local totalPct = (fillFrac + questFrac) * 100
+		onRightText:SetText(string.format("%.1f%% (%.1f%%)", pct, totalPct))
+	else
+		onRightText:SetText(string.format("%.1f%%", pct))
+	end
+
+	-- UNDER BAR TEXT POPULATION
+	if db.showLevelingText then
+		underLeftText:SetText(xpPerHour and (formatXPAmount(xpPerHour) .. " XP/h") or "-- XP/h")
+	else
+		underLeftText:SetText("")
+	end
+
+	-- Under Center: Quests & Rested
 	if db.showBottomText then
 		local parts = {}
 		if db.showQuestSegment then
-			parts[#parts + 1] = string.format("|cffffbd47Completed: %.1f%%|r", questFrac * 100)
+			parts[#parts + 1] = string.format("|cFFFFBD47Completed Quests: %.1f%%|r", questFrac * 100)
 		end
 		if db.showRestedSegment then
-			parts[#parts + 1] = string.format("|cff5ce699Rested: %.1f%%|r", restedFrac * 100)
+			parts[#parts + 1] = string.format("|cFF66B2FFRested XP: %.1f%%|r", restedFrac * 100)
 		end
-		centerText:SetText(table.concat(parts, "  -  "))
+		underCenterText:SetText(table.concat(parts, " |cFFFFFFFF-|r "))
 	else
-		centerText:SetText("")
+		underCenterText:SetText("")
 	end
 
-	-- RIGHT: Session time
+	-- Under Right: Session
 	if db.showSessionTimeText then
-		rightText:SetText("Session: " .. formatDuration(sessionSeconds()))
+		underRightText:SetText("Session: " .. formatDuration(sessionSeconds()))
 	else
-		rightText:SetText("")
-	end
-
-	-- UNDER THE BAR: estimated time to the next level
-	if db.showTimeLeftText then
-		local xpLeft = math.max(0, xpMax - xp)
-		local eta
-		if xpPerHour and xpPerHour > 0 then
-			eta = formatETA(xpLeft / xpPerHour * 3600)
-		end
-		timeText:SetText(string.format(
-			"|cff8ee6deNext level:|r %s%s  |cffaaaaaa(%s XP left of %s)|r",
-			eta and "~" or "", eta or "--", formatXPAmount(xpLeft), formatXPAmount(xpMax)))
-	else
-		timeText:SetText("")
+		underRightText:SetText("")
 	end
 end
 
@@ -789,7 +771,7 @@ end
 --------------------------------------------------------------------
 
 local DEFAULT_XP_BAR_NAMES = {
-	"StatusTrackingBarManager", -- Covers modern/beta client layouts
+	"StatusTrackingBarManager", 
 	"MainStatusTrackingBarContainer",
 	"MainMenuBarXPBar",
 	"MainMenuExpBar",
@@ -805,8 +787,6 @@ local function applyHideDefaultXP()
 		if f and type(f.Hide) == "function" and type(f.Show) == "function" then
 			pcall(function()
 				if hide then f:Hide() else f:Show() end
-				
-				-- Hook the Show method so Blizzard can't force it back open
 				if not f.fxpHooked then
 					f.fxpHooked = true
 					hooksecurefunc(f, "Show", function(self)
@@ -849,7 +829,6 @@ mmBack:SetSize(20, 20)
 mmBack:SetPoint("TOPLEFT", 7, -5)
 mmBack:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
 
--- icon body: dark plate, "XP" label and a tiny aurora bar
 local mmPlate = minimapBtn:CreateTexture(nil, "ARTWORK")
 mmPlate:SetSize(17, 17)
 mmPlate:SetPoint("TOPLEFT", 8, -6)
@@ -890,7 +869,6 @@ local function minimapBtnUpdatePosition()
 	local x, y
 	local shape = safe(GetMinimapShape)
 	if shape == "SQUARE" then
-		-- square minimaps (ElvUI): slide the button along the edge
 		x = clamp(cosA * w * 1.4142, -w, w)
 		y = clamp(sinA * h * 1.4142, -h, h)
 	else
@@ -918,7 +896,7 @@ minimapBtn:SetScript("OnUpdate", function(self)
 end)
 
 minimapBtn:SetScript("OnClick", function(_, button)
-	if GetTime() - lastDragEnd < 0.25 then return end -- release after a drag
+	if GetTime() - lastDragEnd < 0.25 then return end 
 	if button == "RightButton" then
 		db.locked = not db.locked
 		printMsg("bar " .. (db.locked and "locked." or "unlocked - drag to move."))
@@ -945,9 +923,7 @@ minimapBtn:SetScript("OnLeave", function()
 end)
 
 --------------------------------------------------------------------
--- 12. Settings panel (ElvUI look: flat dark boxes, 1px black borders,
---     value-colored accents). Built on first open so ElvUI's colors
---     and font are available; if ElvUI is loaded we borrow them.
+-- 12. Settings panel (ElvUI look)
 --------------------------------------------------------------------
 
 local WHITE = "Interface\\Buttons\\WHITE8x8"
@@ -958,7 +934,7 @@ local theme = {
 	box    = { 0.10, 0.10, 0.10, 1 },
 	line   = { 0.22, 0.22, 0.22, 1 },
 	border = { 0, 0, 0, 1 },
-	value  = { 0.09, 0.52, 0.82 },   -- ElvUI default blue
+	value  = { 0.09, 0.52, 0.82 },   
 	text   = { 0.90, 0.90, 0.90 },
 	dim    = { 0.60, 0.60, 0.60 },
 }
@@ -1015,10 +991,6 @@ end
 
 local optionsPanel
 
--- An addon cannot write its save file itself, and this client also blocks
--- addons from calling ReloadUI ("Interface action failed because of an
--- AddOn"). The game writes the file on /reload or a clean logout/exit, so all
--- we can do is make sure our table is the one it will write, and tell you.
 local function saveNow()
 	if not dbReady then return end
 	_G.ForeverXPDB = db
@@ -1035,7 +1007,7 @@ end
 local function buildOptions()
 	resolveTheme()
 	local T = theme
-	local PANEL_W, PANEL_H = 340, 360
+	local PANEL_W, PANEL_H = 340, 380 
 	local CONTENT_W = PANEL_W - 24
 	local TRACK_W = CONTENT_W - 4
 
@@ -1052,14 +1024,13 @@ local function buildOptions()
 	panel:SetClampedToScreen(true)
 	if UISpecialFrames then table.insert(UISpecialFrames, "ForeverXPOptionsFrame") end
 
-	-- header strip + title
 	local head = panel:CreateTexture(nil, "ARTWORK")
 	head:SetPoint("TOPLEFT", panel, "TOPLEFT", 1, -1)
 	head:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -1, -1)
 	head:SetHeight(26)
 	head:SetColorTexture(T.box[1], T.box[2], T.box[3], 1)
 
-	local title = label(panel, hex(T.value) .. "XP|r Bar  " .. hex(T.dim) .. "0.5.1|r", 13)
+	local title = label(panel, hex(T.value) .. "XP|r Bar  " .. hex(T.dim) .. "0.5.2|r", 13)
 	title:SetPoint("LEFT", head, "LEFT", 10, 0)
 
 	local closeBtn = newBox(panel, T.bg, T.border, "Button")
@@ -1071,7 +1042,6 @@ local function buildOptions()
 	closeBtn:SetScript("OnEnter", function() closeX:SetTextColor(1, 0.25, 0.25, 1) setBorder(closeBtn, { 1, 0.25, 0.25, 1 }) end)
 	closeBtn:SetScript("OnLeave", function() closeX:SetTextColor(T.text[1], T.text[2], T.text[3], 1) setBorder(closeBtn, T.border) end)
 
-	-- pages + tabs -------------------------------------------------
 	local pages, tabs = {}, {}
 	local function newPage(key)
 		local p = CreateFrame("Frame", nil, panel)
@@ -1107,7 +1077,6 @@ local function buildOptions()
 	makeTab("adjust", "Adjust", 2)
 	makeTab("info", "Info", 3)
 
-	-- widgets ------------------------------------------------------
 	local checks, sliders, choices = {}, {}, {}
 
 	local function newStack(page) return { page = page, y = 0 } end
@@ -1266,19 +1235,18 @@ local function buildOptions()
 		s.y = s.y - 28
 	end
 
-	-- Options tab --------------------------------------------------
 	local so = newStack(newPage("options"))
 	addHeader(so, "Bar text")
-	addCheck(so, "Completed & Rested (center)",
+	addCheck(so, "Quests & Rested (under center)",
 		function() return db.showBottomText end,
 		function(v) db.showBottomText = v and true or false end)
-	addCheck(so, "XP / Hour (left)",
+	addCheck(so, "XP / Hour (under left)",
 		function() return db.showLevelingText end,
 		function(v) db.showLevelingText = v and true or false end)
-	addCheck(so, "Session Time (right)",
+	addCheck(so, "Session Time (under right)",
 		function() return db.showSessionTimeText end,
 		function(v) db.showSessionTimeText = v and true or false end)
-	addCheck(so, "Time to Next Level (under bar)",
+	addCheck(so, "Time to Next Level (appended next to level)",
 		function() return db.showTimeLeftText end,
 		function(v) db.showTimeLeftText = v and true or false end)
 	addHeader(so, "Bar")
@@ -1305,19 +1273,21 @@ local function buildOptions()
 		function() return db.autoSaveOnClose end,
 		function(v) db.autoSaveOnClose = v and true or false end)
 
-	-- Adjust tab ---------------------------------------------------
 	local sa = newStack(newPage("adjust"))
 	addHeader(sa, "Adjust Bar")
-	addSlider(sa, "Bar Width", 60, 600,
+	addSlider(sa, "Bar Width", 60, 800,
 		function() return db.width end,
 		function(v) db.width = v end)
 	addSlider(sa, "Bar Height", 8, 60,
 		function() return db.height end,
 		function(v) db.height = v end)
 	addHeader(sa, "Text")
-	addSlider(sa, "Text Size", 8, 24,
+	addSlider(sa, "Main Text Size", 8, 24,
 		function() return db.fontSize end,
 		function(v) db.fontSize = v end)
+	addSlider(sa, "Bottom Quests/Rested Size", 8, 24,
+		function() return db.bottomFontSize end,
+		function(v) db.bottomFontSize = v end)
 	addChoice(sa, "Text Style", {
 		{ text = "Normal", value = false },
 		{ text = "Bold", value = true },
@@ -1327,7 +1297,6 @@ local function buildOptions()
 	hint:SetWidth(CONTENT_W - 4)
 	hint:SetJustifyH("LEFT")
 
-	-- Info tab -----------------------------------------------------
 	local infoPage = newPage("info")
 	local infoLines = {
 		hex(T.value) .. "Slash commands|r",
@@ -1338,12 +1307,11 @@ local function buildOptions()
 		"/foreverxp timeleft on/off   (time to level)",
 		"/foreverxp maxlevel | hideblizzard | autoquest on/off",
 		"/foreverxp width <n> | height <n>",
-		"/foreverxp fontsize <n> | bold on/off",
+		"/foreverxp fontsize <n> | bottomsize <n> | bold on/off",
 		"",
 		hex(T.value) .. "Bar text|r",
-		"LEFT: XP per hour     CENTER: Completed & Rested",
-		"RIGHT: Session time (resets every login)",
-		"UNDER BAR: estimated time to next level",
+		"ON BAR: Level (Left) | XP/Max (Center) | % (Right)",
+		"UNDER BAR: XP/h (Left) | Quests/Rested (Center) | Session (Right)",
 		"",
 		hex(T.value) .. "Minimap button|r",
 		"Left-click: settings    Right-click: lock/unlock",
@@ -1363,7 +1331,6 @@ local function buildOptions()
 
 	switchTab("options")
 
-	-- Closing the panel (X button, ESC or /foreverxp) after a change saves.
 	local openSnapshot
 	panel:HookScript("OnShow", function() openSnapshot = settingsSnapshot() end)
 	panel:HookScript("OnHide", function()
@@ -1391,7 +1358,7 @@ local function refreshOptions()
 end
 
 --------------------------------------------------------------------
--- 13. Events (every registration guarded - an unknown event throws)
+-- 13. Events 
 --------------------------------------------------------------------
 
 local watcher = CreateFrame("Frame")
@@ -1416,8 +1383,6 @@ watcher:SetScript("OnEvent", function(_, event, arg1, arg2)
 	end
 
 	if event == "PLAYER_LOGOUT" then
-		-- The file the game writes now must contain OUR live table, in both
-		-- saved files.
 		if dbReady then
 			_G.ForeverXPDB = db
 			mirrorToBackup()
@@ -1438,8 +1403,6 @@ watcher:SetScript("OnEvent", function(_, event, arg1, arg2)
 
 	if event == "PLAYER_ENTERING_WORLD" then
 		worldEntered = true
-		-- arg1 = isInitialLogin, arg2 = isReloadingUi. Zoning fires this
-		-- event too (both false), so only a real login resets the session.
 		local now = time()
 		local fresh = (arg1 == true)
 			or (arg1 == nil and arg2 == nil and (not db.lastSeen or now - db.lastSeen > 60))
@@ -1477,21 +1440,17 @@ watcher:SetScript("OnEvent", function(_, event, arg1, arg2)
 	update()
 end)
 
--- 1s ticker: counts time on the level, keeps time-based text fresh and
--- catches quest-log changes that fire no dedicated event on some clients.
 if C_Timer and C_Timer.NewTicker then
 	local tickCount = 0
 	C_Timer.NewTicker(1, function()
 		syncSavedVars()
 		tickCount = tickCount + 1
-		-- start mirroring only after the game has had ample time to hand us
-		-- the saved table, so a stale default copy never overwrites the backup
 		if tickCount >= 20 and tickCount % 10 == 0 then mirrorToBackup() end
 		cvarWrite()
 		if macroLoad() then needRefresh = true end
 		macroWrite()
 		if tickCount == 45 and rawget(_G, "ForeverXPDB") == nil then
-			_G.ForeverXPDB = db -- late fallback: game never gave us a table
+			_G.ForeverXPDB = db 
 		end
 		if needRefresh then
 			needRefresh = false
@@ -1574,9 +1533,13 @@ SlashCmdList["FOREVERXP"] = function(msg)
 	elseif cmd == "fontsize" and tonumber(arg) then
 		db.fontSize = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
 		relayout(); refreshOptions()
-		printMsg("text size set to " .. db.fontSize)
+		printMsg("main text size set to " .. db.fontSize)
+	elseif cmd == "bottomsize" and tonumber(arg) then
+		db.bottomFontSize = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
+		relayout(); refreshOptions()
+		printMsg("bottom text size set to " .. db.bottomFontSize)
 	elseif cmd == "width" and tonumber(arg) then
-		db.width = clamp(math.floor(tonumber(arg) + 0.5), 60, 600)
+		db.width = clamp(math.floor(tonumber(arg) + 0.5), 60, 800)
 		relayout(); refreshOptions()
 		printMsg("width set to " .. db.width)
 	elseif cmd == "height" and tonumber(arg) then
@@ -1589,7 +1552,7 @@ SlashCmdList["FOREVERXP"] = function(msg)
 		relayout(); refreshOptions()
 		printMsg("position and size reset.")
 	else
-		printMsg("commands: menu | lock | unlock | quest | rested | text | leveling | session | timeleft | maxlevel | hideblizzard | autoquest (on/off) | bold (on/off) | fontsize <n> | width <n> | height <n> | reset")
+		printMsg("commands: menu | lock | unlock | quest | rested | text | leveling | session | timeleft | maxlevel | hideblizzard | autoquest (on/off) | bold (on/off) | fontsize <n> | bottomsize <n> | width <n> | height <n> | reset")
 	end
 end
 
@@ -1607,7 +1570,7 @@ questWatcher:RegisterEvent("QUEST_COMPLETE")
 
 questWatcher:SetScript("OnEvent", function(_, event)
 	if not dbReady or not db.autoQuest then return end
-	if IsShiftKeyDown() then return end -- Pause automation if shift is held down
+	if IsShiftKeyDown() then return end 
 
 	if event == "QUEST_GREETING" then
 		if GetNumActiveQuests then
@@ -1653,5 +1616,4 @@ questWatcher:SetScript("OnEvent", function(_, event)
 	end
 end)
 
--- first paint with the placeholder DB; ADDON_LOADED repaints with the real one
 relayout()
