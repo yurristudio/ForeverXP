@@ -18,8 +18,6 @@ the removed Played Time option is dropped; everything else is kept.
 
 ## What's new in 0.5.1
 
-## What's new in 0.5.1
-
 - **Fix: Settings saving issues.** Addressed a problem where settings (such as hiding the default Blizzard XP bar) were lost after quitting the game to the desktop or typing `/reload`. The addon now correctly re-applies these settings upon logging back in.
 - **New Feature: Auto Accept/Turn-in Quests.** Added an option to automatically accept and turn in quests to speed up leveling. If you want to read the quest text, simply hold down **Shift** while interacting with the NPC to temporarily pause the automation.
   
