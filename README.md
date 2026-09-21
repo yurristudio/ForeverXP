@@ -1,3 +1,17 @@
+## 0.5.3
+
+**New**
+- Colors tab with 8 built-in presets — Aurora, Fire, Ocean, Emerald, Royal, Crimson, Gold, Ice — pick one from a swatch grid to recolor the bar's fill and border.
+- Use My Class Color option: builds the bar's gradient from your actual class color instead of a preset.
+- Show Border toggle (Options → Bar), **off by default** per feedback — the outline is now opt-in.
+
+**Fixed**
+- Class color wasn't being detected due to a Lua expression bug (`X and X(...)` truncates multi-return values) — class color now reads correctly every time.
+
+**Notes**
+- Preset and class-color choices persist the same way as your other settings.
+- Selecting a preset turns off Class Color automatically, and vice versa.
+  
 ## What's new in 0.5.2
 
 - **Layout Adjustments:** Redesigned text positioning to prevent UI collisions when scaling. The center text (Current/Max XP) is now locked to a highly visible, shadow-backed size. The "Next LVL" estimation has been moved inside the bar, seamlessly appended next to your current level.
