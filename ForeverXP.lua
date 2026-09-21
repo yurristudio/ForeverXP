@@ -1,5 +1,5 @@
 --[[
-  ForeverXP 0.5.2
+  ForeverXP 0.5.3
 
   A visual XP bar with an "aurora" design: teal-to-violet gradient fill,
   amber quest segment, mint rested segment, soft glow and a glass edge.
@@ -39,6 +39,9 @@ local defaults = {
 	showSessionTimeText = true,   -- under right: session time
 	showBarAtMaxLevel = false,
 	hideDefaultXPBar = false,
+	showBorder = false,           -- outline around the bar - off by default
+	colorPreset = "aurora",       -- which built-in palette is active
+	useClassColor = false,        -- overrides the fill gradient with your class color
 	autoQuest = false,            -- auto accept/turn-in quests
 	autoSaveOnClose = true,       -- closing the settings panel after a change prints a /reload reminder
 	fontSize = 11,                -- Size for side text
@@ -55,6 +58,50 @@ local defaults = {
 		border  = { 0.45, 0.52, 0.90, 0.90 },
 	},
 }
+
+--------------------------------------------------------------------
+-- 1b. Color presets + class color
+--     Only fillA/fillB/border vary per preset - bg stays a neutral dark
+--     backdrop always, and quest/rested keep their meaning (amber/mint)
+--     unless you're deliberately reading this and want to change that
+--     yourself later.
+--------------------------------------------------------------------
+
+local PRESET_ORDER = { "aurora", "fire", "ocean", "emerald", "royal", "crimson", "gold", "ice" }
+local COLOR_PRESETS = {
+	aurora  = { name = "Aurora",  fillA = { 0.14, 0.86, 0.80 }, fillB = { 0.52, 0.42, 0.98 }, border = { 0.45, 0.52, 0.90, 0.90 } },
+	fire    = { name = "Fire",    fillA = { 1.00, 0.55, 0.10 }, fillB = { 0.85, 0.10, 0.10 }, border = { 1.00, 0.45, 0.15, 0.90 } },
+	ocean   = { name = "Ocean",   fillA = { 0.10, 0.55, 0.95 }, fillB = { 0.05, 0.20, 0.55 }, border = { 0.20, 0.55, 0.90, 0.90 } },
+	emerald = { name = "Emerald", fillA = { 0.20, 0.90, 0.45 }, fillB = { 0.05, 0.45, 0.30 }, border = { 0.20, 0.85, 0.50, 0.90 } },
+	royal   = { name = "Royal",   fillA = { 0.55, 0.35, 0.95 }, fillB = { 0.20, 0.10, 0.55 }, border = { 0.55, 0.35, 0.95, 0.90 } },
+	crimson = { name = "Crimson", fillA = { 0.95, 0.20, 0.35 }, fillB = { 0.45, 0.05, 0.15 }, border = { 0.90, 0.25, 0.35, 0.90 } },
+	gold    = { name = "Gold",    fillA = { 1.00, 0.84, 0.30 }, fillB = { 0.70, 0.45, 0.05 }, border = { 1.00, 0.80, 0.30, 0.90 } },
+	ice     = { name = "Ice",     fillA = { 0.80, 0.95, 1.00 }, fillB = { 0.35, 0.60, 0.85 }, border = { 0.70, 0.90, 1.00, 0.90 } },
+}
+
+local function getClassColorRGB()
+	if not UnitClass then return nil end
+	local _, classFile = UnitClass("player")
+	if not classFile then return nil end
+	if C_ClassColor and C_ClassColor.GetClassColor then
+		local ok, c = pcall(C_ClassColor.GetClassColor, classFile)
+		if ok and c then return c.r, c.g, c.b end
+	end
+	local rc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFile]
+	if rc then return rc.r, rc.g, rc.b end
+	return nil
+end
+
+-- fillA/fillB need to be two distinct shades for the gradient to read as a
+-- fill rather than a flat color, so fillA is a lightened version of the
+-- class color and fillB is the class color itself (darker of the two).
+local function classColorGradient()
+	local r, g, b = getClassColorRGB()
+	if not r then return nil end
+	local function lighten(v) return v + (1 - v) * 0.45 end
+	return { lighten(r), lighten(g), lighten(b) }, { r, g, b }
+end
+
 
 local function deepCopy(src)
 	local out = {}
@@ -127,8 +174,12 @@ local CV_NUM = {
 }
 local CV_STR  = { p = "point", r = "relPoint" }
 local CV_BOOL = { "locked", "showQuestSegment", "showRestedSegment", "showBottomText", "showLevelingText",
-	"showTimeLeftText", "showSessionTimeText", "showBarAtMaxLevel", "hideDefaultXPBar", "autoQuest", "fontBold", "autoSaveOnClose" }
+	"showTimeLeftText", "showSessionTimeText", "showBarAtMaxLevel", "hideDefaultXPBar", "autoQuest", "fontBold", "autoSaveOnClose",
+	"showBorder", "useClassColor" }
 local ANCHORS = { TOP = 1, BOTTOM = 1, LEFT = 1, RIGHT = 1, CENTER = 1, TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 1, BOTTOMRIGHT = 1 }
+
+local PRESET_TO_INDEX = {}
+for i, k in ipairs(PRESET_ORDER) do PRESET_TO_INDEX[k] = i end
 
 local function encodeSettings()
 	local parts = {}
@@ -139,6 +190,8 @@ local function encodeSettings()
 	for key, field in pairs(CV_STR) do
 		if type(db[field]) == "string" then parts[#parts + 1] = key .. "=" .. db[field] end
 	end
+	local presetIdx = PRESET_TO_INDEX[db.colorPreset]
+	if presetIdx then parts[#parts + 1] = "c=" .. presetIdx end
 	local mask = 0
 	for i, k in ipairs(CV_BOOL) do
 		if db[k] then mask = mask + 2 ^ (i - 1) end
@@ -161,6 +214,10 @@ local function applyEncoded(str)
 			end
 		elseif CV_STR[k] then
 			if ANCHORS[v] then db[CV_STR[k]] = v; n = n + 1 end
+		elseif k == "c" then
+			local idx = tonumber(v)
+			local key = idx and PRESET_ORDER[math.floor(idx)]
+			if key then db.colorPreset = key; n = n + 1 end
 		elseif k == "b" then
 			local mask = tonumber(v)
 			if mask then
@@ -281,6 +338,18 @@ local function syncSavedVars()
 	end
 end
 
+local applyClassColor -- forward-declared: body needs printMsg, defined further below
+
+local function applyColorPreset(key)
+	local preset = COLOR_PRESETS[key]
+	if not preset then return end
+	db.colorPreset = key
+	db.useClassColor = false
+	db.colors.fillA = { preset.fillA[1], preset.fillA[2], preset.fillA[3] }
+	db.colors.fillB = { preset.fillB[1], preset.fillB[2], preset.fillB[3] }
+	db.colors.border = { preset.border[1], preset.border[2], preset.border[3], preset.border[4] }
+end
+
 local function initDB()
 	syncSavedVars()
 	if (db.dbVersion or 0) < DB_VERSION then
@@ -293,6 +362,7 @@ local function initDB()
 	dbReady = true
 	restoreFromBackup()
 	cvarInit()
+	if db.useClassColor then applyClassColor() end
 end
 
 --------------------------------------------------------------------
@@ -314,6 +384,19 @@ end
 
 local function printMsg(msg)
 	if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff8ee6deForeverXP|r " .. msg) end
+end
+
+applyClassColor = function()
+	local a, b = classColorGradient()
+	if not a then
+		printMsg("couldn't read your class color right now - try again once you're fully logged in.")
+		return false
+	end
+	db.useClassColor = true
+	db.colors.fillA = a
+	db.colors.fillB = b
+	db.colors.border = { b[1], b[2], b[3], 0.90 }
+	return true
 end
 
 local function getQuestLogPendingXP()
@@ -479,9 +562,16 @@ if main.SetBackdrop then
 		edgeSize = 1,
 	})
 	main:SetBackdropColor(0, 0, 0, 0)
-	local bc = db.colors.border
-	main:SetBackdropBorderColor(bc[1], bc[2], bc[3], bc[4])
 end
+local function paintBorder()
+	local bc = db.colors.border
+	if db.showBorder then
+		main:SetBackdropBorderColor(bc[1], bc[2], bc[3], bc[4])
+	else
+		main:SetBackdropBorderColor(0, 0, 0, 0)
+	end
+end
+paintBorder()
 
 local bar = CreateFrame("Frame", "ForeverXPBarFrame", main)
 bar:SetSize(db.width, db.height)
@@ -526,13 +616,17 @@ local quest = bar:CreateTexture(nil, "ARTWORK", nil, 2)
 quest:SetPoint("LEFT", fill, "RIGHT", 0, 0)
 quest:SetHeight(db.height)
 quest:SetWidth(0.001)
-quest:SetColorTexture(unpack(db.colors.quest))
 
 local rested = bar:CreateTexture(nil, "ARTWORK", nil, 3)
 rested:SetPoint("LEFT", quest, "RIGHT", 0, 0)
 rested:SetHeight(db.height)
 rested:SetWidth(0.001)
-rested:SetColorTexture(unpack(db.colors.rested))
+
+local function paintSegments()
+	quest:SetColorTexture(unpack(db.colors.quest))
+	rested:SetColorTexture(unpack(db.colors.rested))
+end
+paintSegments()
 
 local sheen = bar:CreateTexture(nil, "ARTWORK", nil, 5)
 sheen:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
@@ -762,6 +856,8 @@ relayout = function()
 	divRested:SetHeight(db.height)
 	paintGlow()
 	paintFill()
+	paintSegments()
+	paintBorder()
 	applyFonts()
 	update()
 end
@@ -1030,7 +1126,7 @@ local function buildOptions()
 	head:SetHeight(26)
 	head:SetColorTexture(T.box[1], T.box[2], T.box[3], 1)
 
-	local title = label(panel, hex(T.value) .. "XP|r Bar  " .. hex(T.dim) .. "0.5.2|r", 13)
+	local title = label(panel, hex(T.value) .. "XP|r Bar  " .. hex(T.dim) .. "0.5.3|r", 13)
 	title:SetPoint("LEFT", head, "LEFT", 10, 0)
 
 	local closeBtn = newBox(panel, T.bg, T.border, "Button")
@@ -1063,7 +1159,7 @@ local function buildOptions()
 	end
 	panel.SwitchTab = switchTab
 
-	local TAB_W = (CONTENT_W - 8) / 3
+	local TAB_W = (CONTENT_W - 12) / 4
 	local function makeTab(key, text, index)
 		local b = newBox(panel, T.box, T.border, "Button")
 		b:SetSize(TAB_W, 22)
@@ -1074,8 +1170,9 @@ local function buildOptions()
 		tabs[key] = b
 	end
 	makeTab("options", "Options", 1)
-	makeTab("adjust", "Adjust", 2)
-	makeTab("info", "Info", 3)
+	makeTab("colors", "Colors", 2)
+	makeTab("adjust", "Adjust", 3)
+	makeTab("info", "Info", 4)
 
 	local checks, sliders, choices = {}, {}, {}
 
@@ -1259,6 +1356,9 @@ local function buildOptions()
 	addCheck(so, "Show Bar at Max Level",
 		function() return db.showBarAtMaxLevel end,
 		function(v) db.showBarAtMaxLevel = v and true or false end)
+	addCheck(so, "Show Border",
+		function() return db.showBorder end,
+		function(v) db.showBorder = v and true or false end)
 	addCheck(so, "Hide Default Experience Bar",
 		function() return db.hideDefaultXPBar end,
 		function(v) db.hideDefaultXPBar = v and true or false end,
@@ -1272,6 +1372,69 @@ local function buildOptions()
 	addCheck(so, "Remind me to /reload after changes",
 		function() return db.autoSaveOnClose end,
 		function(v) db.autoSaveOnClose = v and true or false end)
+
+	local sc = newStack(newPage("colors"))
+	addHeader(sc, "Presets")
+	do
+		local cols = 4
+		local gap = 6
+		local swW = (CONTENT_W - gap * (cols - 1)) / cols
+		local swH = 34
+		local topY = sc.y
+		for i, key in ipairs(PRESET_ORDER) do
+			local preset = COLOR_PRESETS[key]
+			local col = (i - 1) % cols
+			local row = math.floor((i - 1) / cols)
+			local b = CreateFrame("Button", nil, sc.page, "BackdropTemplate")
+			b:SetSize(swW, swH)
+			b:SetPoint("TOPLEFT", sc.page, "TOPLEFT", col * (swW + gap), topY - row * (swH + gap))
+			if b.SetBackdrop then
+				b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2 })
+				b:SetBackdropColor(0, 0, 0, 0)
+			end
+			local grad = b:CreateTexture(nil, "ARTWORK")
+			grad:SetPoint("TOPLEFT", 2, -2)
+			grad:SetPoint("BOTTOMRIGHT", -2, 2)
+			local ok = pcall(function()
+				grad:SetColorTexture(1, 1, 1, 1)
+				grad:SetGradient("HORIZONTAL",
+					CreateColor(preset.fillA[1], preset.fillA[2], preset.fillA[3], 1),
+					CreateColor(preset.fillB[1], preset.fillB[2], preset.fillB[3], 1))
+			end)
+			if not ok then grad:SetColorTexture(preset.fillA[1], preset.fillA[2], preset.fillA[3], 1) end
+			local lab = label(b, preset.name, 10, nil, "OUTLINE")
+			lab:SetPoint("BOTTOM", b, "BOTTOM", 0, 3)
+			lab:SetTextColor(1, 1, 1, 1)
+			b:SetScript("OnClick", function()
+				applyColorPreset(key)
+				relayout()
+				panel:Refresh()
+			end)
+			local function refreshSel()
+				local sel = (not db.useClassColor) and db.colorPreset == key
+				local c = sel and T.value or T.border
+				if b.SetBackdropBorderColor then b:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1) end
+			end
+			checks[#checks + 1] = refreshSel
+			refreshSel()
+		end
+		local numRows = math.ceil(#PRESET_ORDER / cols)
+		sc.y = sc.y - numRows * (swH + gap) - 4
+	end
+
+	addHeader(sc, "Class Color")
+	addCheck(sc, "Use My Class Color",
+		function() return db.useClassColor end,
+		function(v) db.useClassColor = v and true or false end,
+		function()
+			if db.useClassColor then applyClassColor() else applyColorPreset(db.colorPreset) end
+		end)
+	local colorHint = label(sc.page,
+		"Presets set the bar's fill and border. Class Color overrides the fill with your class's color - pick a preset again to go back.",
+		10, T.dim)
+	colorHint:SetPoint("TOPLEFT", sc.page, "TOPLEFT", 2, sc.y - 4)
+	colorHint:SetWidth(CONTENT_W - 4)
+	colorHint:SetJustifyH("LEFT")
 
 	local sa = newStack(newPage("adjust"))
 	addHeader(sa, "Adjust Bar")
@@ -1454,6 +1617,7 @@ if C_Timer and C_Timer.NewTicker then
 		end
 		if needRefresh then
 			needRefresh = false
+			if db.useClassColor then applyClassColor() end
 			relayout()
 			applyHideDefaultXP()
 			refreshOptions()
