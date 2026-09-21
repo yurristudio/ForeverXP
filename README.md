@@ -3,7 +3,14 @@
 **New**
 - Colors tab with 8 built-in presets — Aurora, Fire, Ocean, Emerald, Royal, Crimson, Gold, Ice — pick one from a swatch grid to recolor the bar's fill and border.
 - Use My Class Color option: builds the bar's gradient from your actual class color instead of a preset.
-- Show Border toggle (Options → Bar), **off by default** per feedback — the outline is now opt-in.
+- Show Border toggle (Options → Bar), **off by default** — the outline is now opt-in.
+- Show Bar toggle (Options → Bar): hide or show the entire bar. The minimap button and settings panel keep working while the bar is hidden.
+- New `/fxp` shortcut — every command works with `/fxp` as well as `/foreverxp` (e.g. `/fxp menu`, `/fxp width 300`).
+- New commands: `/fxp show`, `/fxp hide` and `/fxp toggle` to show or hide the bar.
+
+**Changed**
+- Settings panel is slightly taller to fit the new option.
+- Info tab and in-game command help now list `/fxp`.
 
 **Fixed**
 - Class color wasn't being detected due to a Lua expression bug (`X and X(...)` truncates multi-return values) — class color now reads correctly every time.
@@ -11,20 +18,19 @@
 **Notes**
 - Preset and class-color choices persist the same way as your other settings.
 - Selecting a preset turns off Class Color automatically, and vice versa.
-  
-## What's new in 0.5.2
+- Existing users: your saved settings are kept and the bar stays visible after updating.
+- `/foreverxp` still works as before.
 
-- **Layout Adjustments:** Redesigned text positioning to prevent UI collisions when scaling. The center text (Current/Max XP) is now locked to a highly visible, shadow-backed size. The "Next LVL" estimation has been moved inside the bar, seamlessly appended next to your current level.
-- **Custom Text Coloring & Scaling:** The "Completed Quests" and "Rested XP" values under the bar are now distinctly color-coded (Yellow and Blue) for immediate visual feedback. You can now resize this specific text independently from the rest of the bar using the new "Bottom Quests/Rested Size" slider in the Adjust tab.
-- **New Feature: Auto Questing.** Added a toggle to automatically accept and turn in quests to accelerate leveling. Hold **Shift** while interacting with an NPC to temporarily pause the automation if you want to read the lore.
-- **Fix: Persistent UI Hiding.** The "Hide Default Experience Bar" option now hooks aggressively into the Blizzard UI frame manager, ensuring the default bar stays hidden even after completely exiting and relaunching the game.
+What's new in 0.5.2
+Layout Adjustments: Redesigned text positioning to prevent UI collisions when scaling. The center text (Current/Max XP) is now locked to a highly visible, shadow-backed size. The "Next LVL" estimation has been moved inside the bar, seamlessly appended next to your current level.
+Custom Text Coloring & Scaling: The "Completed Quests" and "Rested XP" values under the bar are now distinctly color-coded (Yellow and Blue) for immediate visual feedback. You can now resize this specific text independently from the rest of the bar using the new "Bottom Quests/Rested Size" slider in the Adjust tab.
+New Feature: Auto Questing. Added a toggle to automatically accept and turn in quests to accelerate leveling. Hold Shift while interacting with an NPC to temporarily pause the automation if you want to read the lore.
+Fix: Persistent UI Hiding. The "Hide Default Experience Bar" option now hooks aggressively into the Blizzard UI frame manager, ensuring the default bar stays hidden even after completely exiting and relaunching the game.
 
 # ForeverXP 0.5.1
 
-Visual XP bar for World of Warcraft: Forever with an "aurora" look:
-teal-to-violet gradient fill, amber segment for quest XP sitting unclaimed in
-your log, mint segment for banked rested bonus, soft glow and a glass edge.
-Settings live in an ElvUI-style panel opened from the XP minimap button.
+Fix: Settings saving issues. Addressed a problem where settings (such as hiding the default Blizzard XP bar) were lost after quitting the game to the desktop or typing /reload. The addon now correctly re-applies these settings upon logging back in.
+New Feature: Auto Accept/Turn-in Quests. Added an option to automatically accept and turn in quests to speed up leveling. If you want to read the quest text, simply hold down Shift while interacting with the NPC to temporarily pause the automation.
 
 ## Install
 
@@ -39,9 +45,14 @@ the removed Played Time option is dropped; everything else is kept.
 
 ## What's new in 0.5.1
 
-- **Fix: Settings saving issues.** Addressed a problem where settings (such as hiding the default Blizzard XP bar) were lost after quitting the game to the desktop or typing `/reload`. The addon now correctly re-applies these settings upon logging back in.
-- **New Feature: Auto Accept/Turn-in Quests.** Added an option to automatically accept and turn in quests to speed up leveling. If you want to read the quest text, simply hold down **Shift** while interacting with the NPC to temporarily pause the automation.
-  
+- **Fix: settings lost on `/reload` (most visible on the Adjust sliders).**
+  0.5.0 adopted the saved table on ADDON_LOADED, but this beta client can
+  inject `ForeverXPDB` later or swap it mid-session - writes then landed in
+  a table the game never serializes. The DB now re-syncs with the game's
+  table once a second: live edits are moved into whatever table the game
+  actually saves, or ours is published if none arrives. Test: drag a slider,
+  `/reload`, value should stick.
+
 ## What was new in 0.5.0
 
 - **Settings now persist** across `/reload` and relog (SavedVariables are now
