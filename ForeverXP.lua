@@ -38,6 +38,7 @@ local defaults = {
 	showTimeLeftText = true,      -- appended next to level: time to next level
 	showSessionTimeText = true,   -- under right: session time
 	showBarAtMaxLevel = false,
+	hideBar = false,              -- hides the entire bar (stored inverted so older saved settings keep it visible)
 	hideDefaultXPBar = false,
 	showBorder = false,           -- outline around the bar - off by default
 	colorPreset = "aurora",       -- which built-in palette is active
@@ -175,7 +176,7 @@ local CV_NUM = {
 local CV_STR  = { p = "point", r = "relPoint" }
 local CV_BOOL = { "locked", "showQuestSegment", "showRestedSegment", "showBottomText", "showLevelingText",
 	"showTimeLeftText", "showSessionTimeText", "showBarAtMaxLevel", "hideDefaultXPBar", "autoQuest", "fontBold", "autoSaveOnClose",
-	"showBorder", "useClassColor" }
+	"showBorder", "useClassColor", "hideBar" }
 local ANCHORS = { TOP = 1, BOTTOM = 1, LEFT = 1, RIGHT = 1, CENTER = 1, TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 1, BOTTOMRIGHT = 1 }
 
 local PRESET_TO_INDEX = {}
@@ -732,6 +733,10 @@ underRightText:SetJustifyH("RIGHT")
 --------------------------------------------------------------------
 
 update = function()
+	if db.hideBar then
+		main:Hide()
+		return
+	end
 	local level = safe(UnitLevel, "player") or 0
 	local maxLevel = safe(GetMaxPlayerLevel) or level
 	local xpDisabled = safe(IsXPUserDisabled)
@@ -1103,7 +1108,7 @@ end
 local function buildOptions()
 	resolveTheme()
 	local T = theme
-	local PANEL_W, PANEL_H = 340, 380 
+	local PANEL_W, PANEL_H = 340, 404 
 	local CONTENT_W = PANEL_W - 24
 	local TRACK_W = CONTENT_W - 4
 
@@ -1347,6 +1352,9 @@ local function buildOptions()
 		function() return db.showTimeLeftText end,
 		function(v) db.showTimeLeftText = v and true or false end)
 	addHeader(so, "Bar")
+	addCheck(so, "Show Bar",
+		function() return not db.hideBar end,
+		function(v) db.hideBar = not v end)
 	addCheck(so, "Show Quest XP Segment",
 		function() return db.showQuestSegment end,
 		function(v) db.showQuestSegment = v and true or false end)
@@ -1463,14 +1471,15 @@ local function buildOptions()
 	local infoPage = newPage("info")
 	local infoLines = {
 		hex(T.value) .. "Slash commands|r",
-		"/foreverxp menu | lock | unlock | reset",
-		"/foreverxp quest | rested | text on/off",
-		"/foreverxp leveling on/off   (XP per hour)",
-		"/foreverxp session on/off",
-		"/foreverxp timeleft on/off   (time to level)",
-		"/foreverxp maxlevel | hideblizzard | autoquest on/off",
-		"/foreverxp width <n> | height <n>",
-		"/foreverxp fontsize <n> | bottomsize <n> | bold on/off",
+		"/fxp  (or /foreverxp)  menu | show | hide | toggle",
+		"/fxp lock | unlock | reset",
+		"/fxp quest | rested | text on/off",
+		"/fxp leveling on/off   (XP per hour)",
+		"/fxp session on/off",
+		"/fxp timeleft on/off   (time to level)",
+		"/fxp maxlevel | hideblizzard | autoquest on/off",
+		"/fxp width <n> | height <n>",
+		"/fxp fontsize <n> | bottomsize <n> | bold on/off",
 		"",
 		hex(T.value) .. "Bar text|r",
 		"ON BAR: Level (Left) | XP/Max (Center) | % (Right)",
@@ -1632,6 +1641,7 @@ end
 --------------------------------------------------------------------
 
 SLASH_FOREVERXP1 = "/foreverxp"
+SLASH_FOREVERXP2 = "/fxp"
 SlashCmdList["FOREVERXP"] = function(msg)
 	msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
 	local cmd, arg = msg:match("^(%S*)%s*(.-)$")
@@ -1639,6 +1649,10 @@ SlashCmdList["FOREVERXP"] = function(msg)
 
 	if cmd == "" or cmd == "menu" or cmd == "options" then
 		toggleOptions()
+	elseif cmd == "show" or cmd == "hide" or cmd == "toggle" then
+		if cmd == "toggle" then db.hideBar = not db.hideBar else db.hideBar = (cmd == "hide") end
+		relayout(); refreshOptions()
+		printMsg("bar " .. (db.hideBar and "hidden" or "shown"))
 	elseif cmd == "lock" then
 		db.locked = true
 		refreshOptions()
@@ -1716,7 +1730,7 @@ SlashCmdList["FOREVERXP"] = function(msg)
 		relayout(); refreshOptions()
 		printMsg("position and size reset.")
 	else
-		printMsg("commands: menu | lock | unlock | quest | rested | text | leveling | session | timeleft | maxlevel | hideblizzard | autoquest (on/off) | bold (on/off) | fontsize <n> | bottomsize <n> | width <n> | height <n> | reset")
+		printMsg("commands (/fxp or /foreverxp): menu | show | hide | toggle | lock | unlock | quest | rested | text | leveling | session | timeleft | maxlevel | hideblizzard | autoquest (on/off) | bold (on/off) | fontsize <n> | bottomsize <n> | width <n> | height <n> | reset")
 	end
 end
 
