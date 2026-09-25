@@ -1,3 +1,46 @@
+# ForeverXP v0.5.4
+
+## Layout changes
+
+- **New row above the bar**: "Time this level" (left) and "Time this session" (right) now have their own dedicated line above the XP bar, instead of being squeezed onto it.
+- **Next LVL ETA moved off the bar**: previously appended next to "Level" on the bar itself, it now sits under the bar, right after the XP/Hour text, in a smaller font.
+- **Completed / Rested moved**: previously centered under the bar, it's now under the bar on the right.
+- **XP / Max XP is bigger by default** (15pt vs the old fixed 13pt) and is now resizable like every other element, instead of being a fixed size.
+- Final layout:
+  - **Above bar:** Time this level (left) · Time this session (right)
+  - **On bar:** Level (left) · XP / Max XP (center) · % (right)
+  - **Under bar:** XP/Hour + Next LVL ETA (left) · Completed / Rested (right)
+
+## Rested segment redesigned
+
+- Rested XP is no longer a solid mint block. It's now a translucent overlay using the bar's own fill gradient (instead of a fixed color), sitting right after the current progress — a "ghost" preview of how far rested XP extends.
+- Automatically follows whichever color preset or class color is active.
+- Removed the old glow/soft-glass edge effect around the bar for a flatter, cleaner edge.
+- Background is more transparent (opacity reduced).
+
+## Per-element text visibility
+
+- Every text element can now be individually shown or hidden — 8 total, up from 4. Newly toggleable: Level, XP / Max XP, %, and "Time this level."
+- Fixed a bug where hiding XP/Hour also silently hid "Time this level," with no way to separate them — each now has its own independent toggle.
+- New slash commands: `/fxp leveltext`, `/fxp xptext`, `/fxp pcttext`, `/fxp leveltime` (on/off).
+
+## Independent text sizing
+
+- Every text element now resizes independently (8 sliders total, up from 2 shared sizes: one "main" size for the on-bar/under-bar-left/right text, and one "bottom" size for the center text).
+- New slash commands: `/fxp centersize <n>` (XP / Max XP), `/fxp etasize <n>` (Next LVL ETA). `/fxp fontsize <n>` now sets Level, %, both above-bar texts, and XP/Hour together; `/fxp bottomsize <n>` sets Completed/Rested.
+- Old settings are migrated automatically on upgrade — existing custom sizes carry over instead of resetting to default.
+
+## Settings panel restructuring
+
+- **Adjust tab** split into three sub-tabs (Bar Size / On-Bar Text / Off-Bar Text) to fit all 8 size sliders.
+- **Options tab** split into two sub-tabs (Bar Text / Bar) to fit all 8 visibility toggles alongside the general bar settings.
+
+## Wording cleanup
+
+- "Completed Quests" → "Completed", "Rested XP" → "Rested", "XP/h" → "XP/Hour" for consistency.
+- Separator between Completed/Rested changed from "-" to "•".
+
+
 ## 0.5.3
 
 **New**
