@@ -1,17 +1,22 @@
 --[[
-  ForeverXP 0.5.3
+  ForeverXP 0.5.4
 
   A visual XP bar with an "aurora" design: teal-to-violet gradient fill,
-  amber quest segment, mint rested segment, soft glow and a glass edge.
+  amber quest segment, a translucent rested overlay in that same gradient,
+  and a clean flat edge (no glow/halo bleeding past the bar's own bounds).
+
+  Every text element below resizes independently of the others (Adjust tab).
 
   Text ON the bar:
-    LEFT   - Current Level & Next LVL ETA (Resizable)
-    CENTER - Current XP / Max XP (Fixed solid size)
-    RIGHT  - Current % and total % with quests (Resizable)
+    LEFT   - Current Level
+    CENTER - Current XP / Max XP (bigger by default - the important number)
+    RIGHT  - Current % and total % with quests
+  Text ABOVE the bar:
+    LEFT   - Time this level
+    RIGHT  - Time this session
   Text UNDER the bar:
-    LEFT   - XP per hour (Main Size)
-    CENTER - Completed Quests % & Rested XP % (Independent Size)
-    RIGHT  - Session time (Main Size)
+    LEFT   - XP per hour, followed by Next LVL ETA
+    RIGHT  - Completed Quests % & Rested XP %
 
   CONTROLS:
   - Minimap button (XP icon): left-click = settings, right-click =
@@ -25,7 +30,7 @@ local ADDON_NAME = ...
 -- 1. Defaults + DB
 --------------------------------------------------------------------
 
-local DB_VERSION = 2
+local DB_VERSION = 3
 
 local defaults = {
 	point = "TOP", relPoint = "TOP", x = 0, y = -150,
@@ -33,9 +38,13 @@ local defaults = {
 	locked = false,
 	showQuestSegment = true,
 	showRestedSegment = true,
+	showLevelText = true,         -- on bar, left: current level
+	showXPText = true,            -- on bar, center: XP / Max XP
+	showPercentText = true,       -- on bar, right: %
+	showLevelTimeText = true,     -- above bar, left: time this level
 	showBottomText = true,        -- under center: quests & rested
 	showLevelingText = true,      -- under left: XP per hour
-	showTimeLeftText = true,      -- appended next to level: time to next level
+	showTimeLeftText = true,      -- under bar, after XP/Hour: time to next level
 	showSessionTimeText = true,   -- under right: session time
 	showBarAtMaxLevel = false,
 	hideBar = false,              -- hides the entire bar (stored inverted so older saved settings keep it visible)
@@ -45,18 +54,26 @@ local defaults = {
 	useClassColor = false,        -- overrides the fill gradient with your class color
 	autoQuest = false,            -- auto accept/turn-in quests
 	autoSaveOnClose = true,       -- closing the settings panel after a change prints a /reload reminder
-	fontSize = 11,                -- Size for side text
-	bottomFontSize = 11,          -- Independent size for bottom center text
+	textSizes = {                 -- each on/off-bar text element resizes independently
+		onLeft     = 11,          -- ON BAR left: Level
+		onCenter   = 15,          -- ON BAR center: XP / Max XP (bigger by default - the important number)
+		onRight    = 11,          -- ON BAR right: %
+		topLeft    = 11,          -- ABOVE BAR left: Time this level
+		topRight   = 11,          -- ABOVE BAR right: Time this session
+		underLeft  = 11,          -- UNDER BAR left: XP/Hour
+		underNext  = 9,           -- UNDER BAR, after XP/Hour: Next LVL ETA (smaller by default)
+		underRight = 11,          -- UNDER BAR right: Completed % / Rested %
+	},
 	fontBold = false,
 	minimapPos = 225,             -- angle around the minimap
 	chars = {},                   -- per-character level timing (for XP/hour)
 	colors = {
-		fillA   = { 0.14, 0.86, 0.80 },  -- aurora teal
-		fillB   = { 0.52, 0.42, 0.98 },  -- aurora violet
-		quest   = { 1.00, 0.74, 0.28 },  -- warm amber
-		rested  = { 0.36, 0.90, 0.60 },  -- mint
-		bg      = { 0.05, 0.06, 0.10, 0.92 },
-		border  = { 0.45, 0.52, 0.90, 0.90 },
+		fillA       = { 0.14, 0.86, 0.80 },  -- aurora teal
+		fillB       = { 0.52, 0.42, 0.98 },  -- aurora violet
+		quest       = { 1.00, 0.74, 0.28 },  -- warm amber
+		restedAlpha = 0.32,                  -- rested overlay = fillA/fillB gradient at this opacity (tracks preset/class color)
+		bg          = { 0.05, 0.06, 0.10, 0.55 },
+		border      = { 0.45, 0.52, 0.90, 0.90 },
 	},
 }
 
@@ -169,14 +186,13 @@ local cvarLast, macroLast
 local worldEntered, macroWait = false, 0
 
 local CV_NUM = {
-	w = { "width", 60, 800, "%.0f" }, h = { "height", 8, 60, "%.0f" }, f = { "fontSize", 8, 24, "%.0f" }, 
-	z = { "bottomFontSize", 8, 24, "%.0f" },
+	w = { "width", 60, 800, "%.0f" }, h = { "height", 8, 60, "%.0f" },
 	x = { "x", -5000, 5000, "%.1f" }, y = { "y", -5000, 5000, "%.1f" }, m = { "minimapPos", -720, 720, "%.0f" },
 }
 local CV_STR  = { p = "point", r = "relPoint" }
 local CV_BOOL = { "locked", "showQuestSegment", "showRestedSegment", "showBottomText", "showLevelingText",
 	"showTimeLeftText", "showSessionTimeText", "showBarAtMaxLevel", "hideDefaultXPBar", "autoQuest", "fontBold", "autoSaveOnClose",
-	"showBorder", "useClassColor", "hideBar" }
+	"showBorder", "useClassColor", "hideBar", "showLevelText", "showXPText", "showPercentText", "showLevelTimeText" }
 local ANCHORS = { TOP = 1, BOTTOM = 1, LEFT = 1, RIGHT = 1, CENTER = 1, TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 1, BOTTOMRIGHT = 1 }
 
 local PRESET_TO_INDEX = {}
@@ -351,8 +367,27 @@ local function applyColorPreset(key)
 	db.colors.border = { preset.border[1], preset.border[2], preset.border[3], preset.border[4] }
 end
 
+local function boundSize(v)
+	if v < 8 then return 8 end
+	if v > 24 then return 24 end
+	return v
+end
+
 local function initDB()
 	syncSavedVars()
+	if (db.dbVersion or 0) < 3 and not db.textSizes then
+		-- migrate the old shared "fontSize"/"bottomFontSize" into the new
+		-- per-element sizes, so upgrading doesn't reset a custom size to defaults
+		local base = tonumber(db.fontSize) or 11
+		local bottomBase = tonumber(db.bottomFontSize) or base
+		db.textSizes = {
+			onLeft = base, onRight = base, topLeft = base, topRight = base, underLeft = base,
+			onCenter = boundSize(base + 3),
+			underNext = boundSize(base - 2),
+			underRight = bottomBase,
+		}
+		db.fontSize, db.bottomFontSize = nil, nil
+	end
 	if (db.dbVersion or 0) < DB_VERSION then
 		db.colors = nil
 		db.showPlayedTimeText = nil
@@ -578,22 +613,6 @@ local bar = CreateFrame("Frame", "ForeverXPBarFrame", main)
 bar:SetSize(db.width, db.height)
 bar:SetPoint("TOP", main, "TOP", 0, -PAD)
 
-local glow = bar:CreateTexture(nil, "BACKGROUND", nil, -1)
-glow:SetPoint("CENTER", bar, "CENTER", 0, 0)
-glow:SetSize(db.width + 8, db.height + 8)
-glow:SetColorTexture(1, 1, 1, 1)
-local function paintGlow()
-	local a, b = db.colors.fillA, db.colors.fillB
-	local ok = pcall(function()
-		glow:SetGradient("HORIZONTAL",
-			CreateColor(a[1], a[2], a[3], 0.16),
-			CreateColor(b[1], b[2], b[3], 0.16))
-	end)
-	if not ok then
-		glow:SetColorTexture(a[1], a[2], a[3], 0.16)
-	end
-end
-
 local bg = bar:CreateTexture(nil, "BACKGROUND")
 bg:SetAllPoints(bar)
 bg:SetColorTexture(unpack(db.colors.bg))
@@ -602,15 +621,24 @@ local fill = bar:CreateTexture(nil, "ARTWORK", nil, 1)
 fill:SetPoint("LEFT", bar, "LEFT", 0, 0)
 fill:SetHeight(db.height)
 fill:SetWidth(1)
-local function paintFill()
+
+-- Paints a texture with the fillA/fillB aurora-style gradient at a given
+-- alpha. Used for both the solid main fill (alpha 1) and the translucent
+-- rested overlay (alpha < 1), so rested always tracks whatever gradient is
+-- currently active (preset or class color) instead of a fixed color.
+local function paintGradientTexture(tex, alpha)
 	local a, b = db.colors.fillA, db.colors.fillB
 	local ok = pcall(function()
-		fill:SetColorTexture(1, 1, 1, 1)
-		fill:SetGradient("HORIZONTAL", CreateColor(a[1], a[2], a[3], 1), CreateColor(b[1], b[2], b[3], 1))
+		tex:SetColorTexture(1, 1, 1, 1)
+		tex:SetGradient("HORIZONTAL", CreateColor(a[1], a[2], a[3], alpha), CreateColor(b[1], b[2], b[3], alpha))
 	end)
 	if not ok then
-		fill:SetColorTexture(a[1], a[2], a[3], 1)
+		tex:SetColorTexture(a[1], a[2], a[3], alpha)
 	end
+end
+
+local function paintFill()
+	paintGradientTexture(fill, 1)
 end
 
 local quest = bar:CreateTexture(nil, "ARTWORK", nil, 2)
@@ -618,6 +646,9 @@ quest:SetPoint("LEFT", fill, "RIGHT", 0, 0)
 quest:SetHeight(db.height)
 quest:SetWidth(0.001)
 
+-- Rested is drawn as a translucent continuation of the fill gradient, right
+-- after the current XP (and quest, if shown) - a "ghost" preview of how far
+-- rested XP would carry you, not a separate solid-color block.
 local rested = bar:CreateTexture(nil, "ARTWORK", nil, 3)
 rested:SetPoint("LEFT", quest, "RIGHT", 0, 0)
 rested:SetHeight(db.height)
@@ -625,7 +656,7 @@ rested:SetWidth(0.001)
 
 local function paintSegments()
 	quest:SetColorTexture(unpack(db.colors.quest))
-	rested:SetColorTexture(unpack(db.colors.rested))
+	paintGradientTexture(rested, db.colors.restedAlpha or 0.32)
 end
 paintSegments()
 
@@ -656,75 +687,93 @@ local divRested = makeDivider(quest)
 --------------------------------------------------------------------
 
 local BAR_FONT = "Fonts\\FRIZQT__.TTF"
-local resizableTexts = {}
-local onBarTexts = {}
-local underCenterText 
+
+-- Every text slot below has its own entry in db.textSizes and resizes on its
+-- own, independently of the others. FONT_SLOTS also drives the "Adjust" UI.
+local FONT_SLOTS = {
+	{ key = "onLeft",     label = "Level (on bar, left)" },
+	{ key = "onCenter",   label = "XP / Max XP (on bar, center)" },
+	{ key = "onRight",    label = "Percent (on bar, right)" },
+	{ key = "topLeft",    label = "Time This Level (above, left)" },
+	{ key = "topRight",   label = "Time This Session (above, right)" },
+	{ key = "underLeft",  label = "XP / Hour (below, left)" },
+	{ key = "underNext",  label = "Next Level ETA (below, after XP/Hour)" },
+	{ key = "underRight", label = "Completed % / Rested % (below, right)" },
+}
+local fontsByKey = {}
+
+-- Maps every text slot to its own show/hide db flag, so each of the 8
+-- elements can be toggled independently in the Options > Bar Text tab.
+local SHOW_FLAG_BY_SLOT = {
+	onLeft     = "showLevelText",
+	onCenter   = "showXPText",
+	onRight    = "showPercentText",
+	topLeft    = "showLevelTimeText",
+	topRight   = "showSessionTimeText",
+	underLeft  = "showLevelingText",
+	underNext  = "showTimeLeftText",
+	underRight = "showBottomText",
+}
 
 local function fontFlags()
 	return db.fontBold and "THICKOUTLINE" or "OUTLINE"
 end
 
-local function onBarFont(parent)
+-- Every on/off-bar text is built through this one function now, keyed to its
+-- own db.textSizes entry so each can be resized separately from the others.
+local function resizableFont(parent, key)
 	local fs = parent:CreateFontString(nil, "OVERLAY")
-	fs:SetFont(BAR_FONT, 13, "OUTLINE")
+	fs:SetFont(BAR_FONT, (db.textSizes and db.textSizes[key]) or 11, fontFlags())
 	fs:SetTextColor(1, 1, 1, 1)
 	fs:SetShadowColor(0, 0, 0, 0.8)
 	fs:SetShadowOffset(1, -1)
-	onBarTexts[#onBarTexts + 1] = fs
-	return fs
-end
-
-local function resizableFont(parent)
-	local fs = parent:CreateFontString(nil, "OVERLAY")
-	fs:SetFont(BAR_FONT, db.fontSize, fontFlags())
-	fs:SetTextColor(1, 1, 1, 1)
-	resizableTexts[#resizableTexts + 1] = fs
+	fontsByKey[key] = fs
 	return fs
 end
 
 local function applyFonts()
-	local size = clamp(db.fontSize or 11, 8, 24)
-	local bottomSize = clamp(db.bottomFontSize or 11, 8, 24)
-	
-	for _, fs in ipairs(resizableTexts) do
-		fs:SetFont(BAR_FONT, size, fontFlags())
-	end
-	
-	if underCenterText then
-		underCenterText:SetFont(BAR_FONT, bottomSize, fontFlags())
-	end
-	
-	for _, fs in ipairs(onBarTexts) do
-		fs:SetFont(BAR_FONT, 13, "OUTLINE")
+	local flags = fontFlags()
+	for _, slot in ipairs(FONT_SLOTS) do
+		local fs = fontsByKey[slot.key]
+		if fs then
+			local size = clamp((db.textSizes and db.textSizes[slot.key]) or 11, 8, 24)
+			fs:SetFont(BAR_FONT, size, flags)
+		end
 	end
 end
 
--- ON BAR TEXT (Resizable)
-local onLeftText = resizableFont(bar)
+-- ON BAR TEXT
+local onLeftText = resizableFont(bar, "onLeft")
 onLeftText:SetPoint("LEFT", bar, "LEFT", 7, 0)
 onLeftText:SetJustifyH("LEFT")
 
--- CENTER TEXT (Fixed Size)
-local onCenterText = onBarFont(bar)
+local onCenterText = resizableFont(bar, "onCenter")
 onCenterText:SetPoint("CENTER", bar, "CENTER", 0, 0)
 
-local onRightText = resizableFont(bar)
+local onRightText = resizableFont(bar, "onRight")
 onRightText:SetPoint("RIGHT", bar, "RIGHT", -7, 0)
 onRightText:SetJustifyH("RIGHT")
 
+-- ABOVE BAR TEXT (outside, Luxthos-style)
+local topLeftText = resizableFont(bar, "topLeft")
+topLeftText:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", 1, 4)
+topLeftText:SetJustifyH("LEFT")
+
+local topRightText = resizableFont(bar, "topRight")
+topRightText:SetPoint("BOTTOMRIGHT", bar, "TOPRIGHT", -1, 4)
+topRightText:SetJustifyH("RIGHT")
+
 -- UNDER BAR TEXT
-local underLeftText = resizableFont(bar)
+local underLeftText = resizableFont(bar, "underLeft")
 underLeftText:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 1, -5)
 underLeftText:SetJustifyH("LEFT")
 
--- Isolated Under Center Text for Independent Scaling
-underCenterText = bar:CreateFontString(nil, "OVERLAY")
-underCenterText:SetFont(BAR_FONT, db.bottomFontSize or 11, fontFlags())
-underCenterText:SetTextColor(1, 1, 1, 1)
-underCenterText:SetPoint("TOP", bar, "BOTTOM", 0, -5)
-underCenterText:SetJustifyH("CENTER")
+-- Next LVL ETA now lives under the bar, right after the XP/Hour text
+local underNextLvlText = resizableFont(bar, "underNext")
+underNextLvlText:SetPoint("LEFT", underLeftText, "RIGHT", 6, 0)
+underNextLvlText:SetJustifyH("LEFT")
 
-local underRightText = resizableFont(bar)
+local underRightText = resizableFont(bar, "underRight")
 underRightText:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", -1, -5)
 underRightText:SetJustifyH("RIGHT")
 
@@ -754,13 +803,15 @@ update = function()
 		divQuest:Hide()
 		divRested:Hide()
 		
-		onLeftText:SetText("Level " .. level)
-		onCenterText:SetText(xpDisabled and "Experience Disabled" or "Max Level")
+		onLeftText:SetText(db.showLevelText and ("Level " .. level) or "")
+		onCenterText:SetText(db.showXPText and (xpDisabled and "Experience Disabled" or "Max Level") or "")
 		onRightText:SetText("")
 		
 		underLeftText:SetText("")
-		underCenterText:SetText("")
+		underNextLvlText:SetText("")
 		underRightText:SetText("")
+		topLeftText:SetText("")
+		topRightText:SetText(db.showSessionTimeText and ("Time this session: " .. (formatETA(sessionSeconds()) or "<1m")) or "")
 		return
 	end
 	main:Show()
@@ -771,12 +822,14 @@ update = function()
 	local questXP = db.showQuestSegment and getQuestLogPendingXP() or 0
 
 	if xpMax <= 0 then
-		onLeftText:SetText("Level " .. level)
-		onCenterText:SetText("--")
+		onLeftText:SetText(db.showLevelText and ("Level " .. level) or "")
+		onCenterText:SetText(db.showXPText and "--" or "")
 		onRightText:SetText("")
 		underLeftText:SetText("")
-		underCenterText:SetText("")
+		underNextLvlText:SetText("")
 		underRightText:SetText("")
+		topLeftText:SetText("")
+		topRightText:SetText("")
 		return
 	end
 
@@ -794,51 +847,63 @@ update = function()
 
 	-- ON BAR TEXT POPULATION
 	local xpPerHour = getXPPerHour(xp)
-	local etaStr = ""
-	
-	if db.showTimeLeftText and xpPerHour and xpPerHour > 0 then
-		local xpLeft = math.max(0, xpMax - xp)
-		local eta = formatETA(xpLeft / xpPerHour * 3600)
-		if eta then
-			etaStr = "   |cFFFFD200Next LVL: ~" .. eta .. "|r"
+
+	onLeftText:SetText(db.showLevelText and ("Level " .. level) or "")
+	onCenterText:SetText(db.showXPText and (xp .. " / " .. xpMax .. " (" .. math.max(0, xpMax - xp) .. ")") or "")
+
+	if db.showPercentText then
+		local pct = fillFrac * 100
+		if questFrac > 0 then
+			local totalPct = (fillFrac + questFrac) * 100
+			onRightText:SetText(string.format("%.1f%% (%.1f%%)", pct, totalPct))
+		else
+			onRightText:SetText(string.format("%.1f%%", pct))
 		end
+	else
+		onRightText:SetText("")
 	end
 
-	onLeftText:SetText("Level " .. level .. etaStr)
-	onCenterText:SetText(xp .. " / " .. xpMax)
-	
-	local pct = fillFrac * 100
-	if questFrac > 0 then
-		local totalPct = (fillFrac + questFrac) * 100
-		onRightText:SetText(string.format("%.1f%% (%.1f%%)", pct, totalPct))
+	-- ABOVE BAR TEXT POPULATION: Time this level (left) / Time this session (right)
+	if db.showLevelTimeText then
+		local levelSecs = track and track.secs or 0
+		topLeftText:SetText("Time this level: " .. (formatETA(levelSecs) or "<1m"))
 	else
-		onRightText:SetText(string.format("%.1f%%", pct))
+		topLeftText:SetText("")
+	end
+	if db.showSessionTimeText then
+		topRightText:SetText("Time this session: " .. (formatETA(sessionSeconds()) or "<1m"))
+	else
+		topRightText:SetText("")
 	end
 
 	-- UNDER BAR TEXT POPULATION
 	if db.showLevelingText then
-		underLeftText:SetText(xpPerHour and (formatXPAmount(xpPerHour) .. " XP/h") or "-- XP/h")
+		underLeftText:SetText(xpPerHour and (formatXPAmount(xpPerHour) .. " XP/Hour") or "-- XP/Hour")
 	else
 		underLeftText:SetText("")
 	end
 
-	-- Under Center: Quests & Rested
+	-- Next LVL ETA - sits right after XP/Hour, under the bar
+	local etaStr = ""
+	if db.showTimeLeftText and xpPerHour and xpPerHour > 0 then
+		local xpLeft = math.max(0, xpMax - xp)
+		local eta = formatETA(xpLeft / xpPerHour * 3600)
+		if eta then
+			etaStr = "|cFFFFD200Next LVL: ~" .. eta .. "|r"
+		end
+	end
+	underNextLvlText:SetText(etaStr)
+
+	-- Under Right: Completed & Rested
 	if db.showBottomText then
 		local parts = {}
 		if db.showQuestSegment then
-			parts[#parts + 1] = string.format("|cFFFFBD47Completed Quests: %.1f%%|r", questFrac * 100)
+			parts[#parts + 1] = string.format("|cFFFFBD47Completed: %.1f%%|r", questFrac * 100)
 		end
 		if db.showRestedSegment then
-			parts[#parts + 1] = string.format("|cFF66B2FFRested XP: %.1f%%|r", restedFrac * 100)
+			parts[#parts + 1] = string.format("|cFF66B2FFRested: %.1f%%|r", restedFrac * 100)
 		end
-		underCenterText:SetText(table.concat(parts, " |cFFFFFFFF-|r "))
-	else
-		underCenterText:SetText("")
-	end
-
-	-- Under Right: Session
-	if db.showSessionTimeText then
-		underRightText:SetText("Session: " .. formatDuration(sessionSeconds()))
+		underRightText:SetText(table.concat(parts, " |cFFFFFFFF\226\128\162|r "))
 	else
 		underRightText:SetText("")
 	end
@@ -853,13 +918,11 @@ relayout = function()
 	main:ClearAllPoints()
 	main:SetPoint(db.point, UIParent, db.relPoint, db.x, db.y)
 	bar:SetSize(db.width, db.height)
-	glow:SetSize(db.width + 8, db.height + 8)
 	fill:SetHeight(db.height)
 	quest:SetHeight(db.height)
 	rested:SetHeight(db.height)
 	divQuest:SetHeight(db.height)
 	divRested:SetHeight(db.height)
-	paintGlow()
 	paintFill()
 	paintSegments()
 	paintBorder()
@@ -1131,7 +1194,7 @@ local function buildOptions()
 	head:SetHeight(26)
 	head:SetColorTexture(T.box[1], T.box[2], T.box[3], 1)
 
-	local title = label(panel, hex(T.value) .. "XP|r Bar  " .. hex(T.dim) .. "0.5.3|r", 13)
+	local title = label(panel, hex(T.value) .. "XP|r Bar  " .. hex(T.dim) .. "0.5.4|r", 13)
 	title:SetPoint("LEFT", head, "LEFT", 10, 0)
 
 	local closeBtn = newBox(panel, T.bg, T.border, "Button")
@@ -1337,49 +1400,82 @@ local function buildOptions()
 		s.y = s.y - 28
 	end
 
-	local so = newStack(newPage("options"))
-	addHeader(so, "Bar text")
-	addCheck(so, "Quests & Rested (under center)",
-		function() return db.showBottomText end,
-		function(v) db.showBottomText = v and true or false end)
-	addCheck(so, "XP / Hour (under left)",
-		function() return db.showLevelingText end,
-		function(v) db.showLevelingText = v and true or false end)
-	addCheck(so, "Session Time (under right)",
-		function() return db.showSessionTimeText end,
-		function(v) db.showSessionTimeText = v and true or false end)
-	addCheck(so, "Time to Next Level (appended next to level)",
-		function() return db.showTimeLeftText end,
-		function(v) db.showTimeLeftText = v and true or false end)
-	addHeader(so, "Bar")
-	addCheck(so, "Show Bar",
+	-- Options page has its own small set of inner sub-tabs (same pattern as
+	-- Adjust below) so all 8 individually-toggleable text elements fit
+	-- alongside the general bar settings without overflowing the panel.
+	local optionsPage = newPage("options")
+	local oSubPages, oSubTabs = {}, {}
+	local function switchOptionsSubTab(key)
+		for k, p in pairs(oSubPages) do p:SetShown(k == key) end
+		for k, b in pairs(oSubTabs) do
+			local on = (k == key)
+			setBorder(b, on and T.value or T.border)
+			local c = on and T.value or T.dim
+			b.text:SetTextColor(c[1], c[2], c[3], 1)
+		end
+	end
+	local OPTIONS_SUB_TABS = {
+		{ key = "text", text = "Bar Text" },
+		{ key = "bar",  text = "Bar" },
+	}
+	local oSubW = (CONTENT_W - (#OPTIONS_SUB_TABS - 1) * 4) / #OPTIONS_SUB_TABS
+	for i, t in ipairs(OPTIONS_SUB_TABS) do
+		local b = newBox(optionsPage, T.box, T.border, "Button")
+		b:SetSize(oSubW, 20)
+		b:SetPoint("TOPLEFT", optionsPage, "TOPLEFT", (i - 1) * (oSubW + 4), 0)
+		b.text = label(b, t.text, 11)
+		b.text:SetPoint("CENTER", 0, 0)
+		b:SetScript("OnClick", function() switchOptionsSubTab(t.key) end)
+		oSubTabs[t.key] = b
+
+		local p = CreateFrame("Frame", nil, optionsPage)
+		p:SetPoint("TOPLEFT", optionsPage, "TOPLEFT", 0, -28)
+		p:SetSize(CONTENT_W, PANEL_H - 74 - 28)
+		p:Hide()
+		oSubPages[t.key] = p
+	end
+
+	local stext = newStack(oSubPages.text)
+	addHeader(stext, "Show or hide each text element")
+	for _, slot in ipairs(FONT_SLOTS) do
+		local flagKey = SHOW_FLAG_BY_SLOT[slot.key]
+		addCheck(stext, slot.label,
+			function() return db[flagKey] end,
+			function(v) db[flagKey] = v and true or false end)
+	end
+
+	local sbar = newStack(oSubPages.bar)
+	addHeader(sbar, "Bar")
+	addCheck(sbar, "Show Bar",
 		function() return not db.hideBar end,
 		function(v) db.hideBar = not v end)
-	addCheck(so, "Show Quest XP Segment",
+	addCheck(sbar, "Show Quest XP Segment",
 		function() return db.showQuestSegment end,
 		function(v) db.showQuestSegment = v and true or false end)
-	addCheck(so, "Show Rested Segment",
+	addCheck(sbar, "Show Rested Segment",
 		function() return db.showRestedSegment end,
 		function(v) db.showRestedSegment = v and true or false end)
-	addCheck(so, "Show Bar at Max Level",
+	addCheck(sbar, "Show Bar at Max Level",
 		function() return db.showBarAtMaxLevel end,
 		function(v) db.showBarAtMaxLevel = v and true or false end)
-	addCheck(so, "Show Border",
+	addCheck(sbar, "Show Border",
 		function() return db.showBorder end,
 		function(v) db.showBorder = v and true or false end)
-	addCheck(so, "Hide Default Experience Bar",
+	addCheck(sbar, "Hide Default Experience Bar",
 		function() return db.hideDefaultXPBar end,
 		function(v) db.hideDefaultXPBar = v and true or false end,
 		function() applyHideDefaultXP() end)
-	addCheck(so, "Lock Bar (no dragging)",
+	addCheck(sbar, "Lock Bar (no dragging)",
 		function() return db.locked end,
 		function(v) db.locked = v and true or false end)
-	addCheck(so, "Auto Accept/Turn-in (Hold Shift to pause)",
+	addCheck(sbar, "Auto Accept/Turn-in (Hold Shift to pause)",
 		function() return db.autoQuest end,
 		function(v) db.autoQuest = v and true or false end)
-	addCheck(so, "Remind me to /reload after changes",
+	addCheck(sbar, "Remind me to /reload after changes",
 		function() return db.autoSaveOnClose end,
 		function(v) db.autoSaveOnClose = v and true or false end)
+
+	switchOptionsSubTab("text")
 
 	local sc = newStack(newPage("colors"))
 	addHeader(sc, "Presets")
@@ -1444,29 +1540,84 @@ local function buildOptions()
 	colorHint:SetWidth(CONTENT_W - 4)
 	colorHint:SetJustifyH("LEFT")
 
-	local sa = newStack(newPage("adjust"))
-	addHeader(sa, "Adjust Bar")
-	addSlider(sa, "Bar Width", 60, 800,
+	local adjustPage = newPage("adjust")
+
+	-- 8 independent text-size sliders plus bar width/height would overflow the
+	-- panel in one page, so Adjust has its own small set of inner sub-tabs.
+	local subPages, subTabs = {}, {}
+	local function switchSubTab(key)
+		for k, p in pairs(subPages) do p:SetShown(k == key) end
+		for k, b in pairs(subTabs) do
+			local on = (k == key)
+			setBorder(b, on and T.value or T.border)
+			local c = on and T.value or T.dim
+			b.text:SetTextColor(c[1], c[2], c[3], 1)
+		end
+	end
+	local SUB_TABS = {
+		{ key = "size",   text = "Bar Size" },
+		{ key = "onbar",  text = "On-Bar Text" },
+		{ key = "offbar", text = "Off-Bar Text" },
+	}
+	local subW = (CONTENT_W - (#SUB_TABS - 1) * 4) / #SUB_TABS
+	for i, t in ipairs(SUB_TABS) do
+		local b = newBox(adjustPage, T.box, T.border, "Button")
+		b:SetSize(subW, 20)
+		b:SetPoint("TOPLEFT", adjustPage, "TOPLEFT", (i - 1) * (subW + 4), 0)
+		b.text = label(b, t.text, 11)
+		b.text:SetPoint("CENTER", 0, 0)
+		b:SetScript("OnClick", function() switchSubTab(t.key) end)
+		subTabs[t.key] = b
+
+		local p = CreateFrame("Frame", nil, adjustPage)
+		p:SetPoint("TOPLEFT", adjustPage, "TOPLEFT", 0, -28)
+		p:SetSize(CONTENT_W, PANEL_H - 74 - 28)
+		p:Hide()
+		subPages[t.key] = p
+	end
+
+	local ssize = newStack(subPages.size)
+	addHeader(ssize, "Bar")
+	addSlider(ssize, "Bar Width", 60, 800,
 		function() return db.width end,
 		function(v) db.width = v end)
-	addSlider(sa, "Bar Height", 8, 60,
+	addSlider(ssize, "Bar Height", 8, 60,
 		function() return db.height end,
 		function(v) db.height = v end)
-	addHeader(sa, "Text")
-	addSlider(sa, "Main Text Size", 8, 24,
-		function() return db.fontSize end,
-		function(v) db.fontSize = v end)
-	addSlider(sa, "Bottom Quests/Rested Size", 8, 24,
-		function() return db.bottomFontSize end,
-		function(v) db.bottomFontSize = v end)
-	addChoice(sa, "Text Style", {
+	addChoice(ssize, "Text Style", {
 		{ text = "Normal", value = false },
 		{ text = "Bold", value = true },
 	}, function() return db.fontBold end, function(v) db.fontBold = v end)
-	local hint = label(sa.page, "Bold = thick outline. Mouse wheel on a slider = fine tune (Shift = x10).", 10, T.dim)
-	hint:SetPoint("TOPLEFT", sa.page, "TOPLEFT", 2, sa.y - 4)
-	hint:SetWidth(CONTENT_W - 4)
-	hint:SetJustifyH("LEFT")
+	local sizeHint = label(ssize.page, "Bold = thick outline. Mouse wheel on a slider = fine tune (Shift = x10).", 10, T.dim)
+	sizeHint:SetPoint("TOPLEFT", ssize.page, "TOPLEFT", 2, ssize.y - 4)
+	sizeHint:SetWidth(CONTENT_W - 4)
+	sizeHint:SetJustifyH("LEFT")
+
+	local sonbar = newStack(subPages.onbar)
+	addHeader(sonbar, "Text drawn on the bar itself")
+	for _, slot in ipairs(FONT_SLOTS) do
+		if slot.key == "onLeft" or slot.key == "onCenter" or slot.key == "onRight" then
+			addSlider(sonbar, slot.label, 8, 24,
+				function() return db.textSizes[slot.key] end,
+				function(v) db.textSizes[slot.key] = v end)
+		end
+	end
+	local onbarHint = label(sonbar.page, "Each size here is independent - resizing one does not affect the others.", 10, T.dim)
+	onbarHint:SetPoint("TOPLEFT", sonbar.page, "TOPLEFT", 2, sonbar.y - 4)
+	onbarHint:SetWidth(CONTENT_W - 4)
+	onbarHint:SetJustifyH("LEFT")
+
+	local soffbar = newStack(subPages.offbar)
+	addHeader(soffbar, "Text above / below the bar")
+	for _, slot in ipairs(FONT_SLOTS) do
+		if slot.key ~= "onLeft" and slot.key ~= "onCenter" and slot.key ~= "onRight" then
+			addSlider(soffbar, slot.label, 8, 24,
+				function() return db.textSizes[slot.key] end,
+				function(v) db.textSizes[slot.key] = v end)
+		end
+	end
+
+	switchSubTab("size")
 
 	local infoPage = newPage("info")
 	local infoLines = {
@@ -1475,15 +1626,20 @@ local function buildOptions()
 		"/fxp lock | unlock | reset",
 		"/fxp quest | rested | text on/off",
 		"/fxp leveling on/off   (XP per hour)",
+		"/fxp leveltext | xptext | pcttext | leveltime on/off",
 		"/fxp session on/off",
 		"/fxp timeleft on/off   (time to level)",
 		"/fxp maxlevel | hideblizzard | autoquest on/off",
 		"/fxp width <n> | height <n>",
-		"/fxp fontsize <n> | bottomsize <n> | bold on/off",
+		"/fxp fontsize <n> | centersize <n> | etasize <n>",
+		"/fxp bottomsize <n> | bold on/off",
 		"",
 		hex(T.value) .. "Bar text|r",
-		"ON BAR: Level (Left) | XP/Max (Center) | % (Right)",
-		"UNDER BAR: XP/h (Left) | Quests/Rested (Center) | Session (Right)",
+		"ABOVE BAR: Time this level (Left) | Time this session (Right)",
+		"ON BAR: Level (Left) | XP / Max (Center) | % (Right)",
+		"UNDER BAR: XP/Hour + Next LVL ETA (Left) | Completed/Rested (Right)",
+		"Every element above can be shown/hidden - Options > Bar Text.",
+		"Every text size adjusts independently - see the Adjust tab.",
 		"",
 		hex(T.value) .. "Minimap button|r",
 		"Left-click: settings    Right-click: lock/unlock",
@@ -1594,7 +1750,7 @@ watcher:SetScript("OnEvent", function(_, event, arg1, arg2)
 				printMsg(string.format(
 					"settings check: game gave saved table=%s (type %s) | backup copy=%s | cvar=%s | macro=%s | width=%s height=%s size=%s",
 					tostring(everAdopted), type(_G.ForeverXPDB), type(bk) == "table" and "yes" or "no",
-					cvarStatus, macroStatus, tostring(db.width), tostring(db.height), tostring(db.fontSize)))
+					cvarStatus, macroStatus, tostring(db.width), tostring(db.height), tostring(db.textSizes and db.textSizes.onCenter)))
 			end)
 		end
 		if C_Timer and C_Timer.After then
@@ -1681,6 +1837,22 @@ SlashCmdList["FOREVERXP"] = function(msg)
 		db.showLevelingText = on
 		relayout(); refreshOptions()
 		printMsg("XP/hour text " .. (on and "on" or "off"))
+	elseif cmd == "leveltext" then
+		db.showLevelText = on
+		relayout(); refreshOptions()
+		printMsg("level text " .. (on and "on" or "off"))
+	elseif cmd == "xptext" then
+		db.showXPText = on
+		relayout(); refreshOptions()
+		printMsg("XP / Max XP text " .. (on and "on" or "off"))
+	elseif cmd == "pcttext" then
+		db.showPercentText = on
+		relayout(); refreshOptions()
+		printMsg("percent text " .. (on and "on" or "off"))
+	elseif cmd == "leveltime" then
+		db.showLevelTimeText = on
+		relayout(); refreshOptions()
+		printMsg("time-this-level text " .. (on and "on" or "off"))
 	elseif cmd == "timeleft" then
 		db.showTimeLeftText = on
 		relayout(); refreshOptions()
@@ -1709,13 +1881,24 @@ SlashCmdList["FOREVERXP"] = function(msg)
 		relayout(); refreshOptions()
 		printMsg("bold text " .. (on and "on" or "off"))
 	elseif cmd == "fontsize" and tonumber(arg) then
-		db.fontSize = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
+		local n = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
+		db.textSizes.onLeft, db.textSizes.onRight = n, n
+		db.textSizes.topLeft, db.textSizes.topRight = n, n
+		db.textSizes.underLeft, db.textSizes.underRight = n, n
 		relayout(); refreshOptions()
-		printMsg("main text size set to " .. db.fontSize)
+		printMsg("main text size set to " .. n)
+	elseif cmd == "centersize" and tonumber(arg) then
+		db.textSizes.onCenter = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
+		relayout(); refreshOptions()
+		printMsg("XP / Max XP (on bar, center) size set to " .. db.textSizes.onCenter)
+	elseif cmd == "etasize" and tonumber(arg) then
+		db.textSizes.underNext = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
+		relayout(); refreshOptions()
+		printMsg("Next LVL ETA size set to " .. db.textSizes.underNext)
 	elseif cmd == "bottomsize" and tonumber(arg) then
-		db.bottomFontSize = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
+		db.textSizes.underRight = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
 		relayout(); refreshOptions()
-		printMsg("bottom text size set to " .. db.bottomFontSize)
+		printMsg("Completed/Rested size set to " .. db.textSizes.underRight)
 	elseif cmd == "width" and tonumber(arg) then
 		db.width = clamp(math.floor(tonumber(arg) + 0.5), 60, 800)
 		relayout(); refreshOptions()
@@ -1730,7 +1913,7 @@ SlashCmdList["FOREVERXP"] = function(msg)
 		relayout(); refreshOptions()
 		printMsg("position and size reset.")
 	else
-		printMsg("commands (/fxp or /foreverxp): menu | show | hide | toggle | lock | unlock | quest | rested | text | leveling | session | timeleft | maxlevel | hideblizzard | autoquest (on/off) | bold (on/off) | fontsize <n> | bottomsize <n> | width <n> | height <n> | reset")
+		printMsg("commands (/fxp or /foreverxp): menu | show | hide | toggle | lock | unlock | quest | rested | text | leveling | leveltext | xptext | pcttext | leveltime | session | timeleft | maxlevel | hideblizzard | autoquest (on/off) | bold (on/off) | fontsize <n> | centersize <n> | etasize <n> | bottomsize <n> | width <n> | height <n> | reset")
 	end
 end
 

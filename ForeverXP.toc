@@ -2,7 +2,7 @@
 ## Title: |cff8ee6deForeverXP|r
 ## Notes: Visual XP bar - aurora design, quest XP, rested bonus, XP/hour, time to level, session time.
 ## Author: Yurri Studio
-## Version: 0.5.3
+## Version: 0.5.4
 ## SavedVariables: ForeverXPDB
 ## SavedVariablesPerCharacter: ForeverXPCharDB
 
