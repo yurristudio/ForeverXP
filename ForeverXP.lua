@@ -1,5 +1,5 @@
 --[[
-  ForeverXP 0.5.4
+  ForeverXP 0.6.0
 
   A visual XP bar with an "aurora" design: teal-to-violet gradient fill,
   amber quest segment, a translucent rested overlay in that same gradient,
@@ -44,7 +44,7 @@ local defaults = {
 	showLevelTimeText = true,     -- above bar, left: time this level
 	showBottomText = true,        -- under center: quests & rested
 	showLevelingText = true,      -- under left: XP per hour
-	showTimeLeftText = true,      -- under bar, after XP/Hour: time to next level
+	showTimeLeftText = true,      -- under bar, after XP/hr: time to next level
 	showSessionTimeText = true,   -- under right: session time
 	showBarAtMaxLevel = false,
 	hideBar = false,              -- hides the entire bar (stored inverted so older saved settings keep it visible)
@@ -60,11 +60,17 @@ local defaults = {
 		onRight    = 11,          -- ON BAR right: %
 		topLeft    = 11,          -- ABOVE BAR left: Time this level
 		topRight   = 11,          -- ABOVE BAR right: Time this session
-		underLeft  = 11,          -- UNDER BAR left: XP/Hour
-		underNext  = 9,           -- UNDER BAR, after XP/Hour: Next LVL ETA (smaller by default)
+		underLeft  = 11,          -- UNDER BAR left: XP/hr
+		underNext  = 9,           -- UNDER BAR, after XP/hr: Next LVL ETA (smaller by default)
 		underRight = 11,          -- UNDER BAR right: Completed % / Rested %
 	},
 	fontBold = false,
+	segmentsUnlocked = false,     -- when true, every text element can be dragged to a custom spot
+	segmentPos = {                -- per-element (x,y) offset added on top of its default position
+		onLeft = { x = 0, y = 0 }, onCenter = { x = 0, y = 0 }, onRight = { x = 0, y = 0 },
+		topLeft = { x = 0, y = 0 }, topRight = { x = 0, y = 0 },
+		underLeft = { x = 0, y = 0 }, underNext = { x = 0, y = 0 }, underRight = { x = 0, y = 0 },
+	},
 	minimapPos = 225,             -- angle around the minimap
 	chars = {},                   -- per-character level timing (for XP/hour)
 	colors = {
@@ -186,13 +192,14 @@ local cvarLast, macroLast
 local worldEntered, macroWait = false, 0
 
 local CV_NUM = {
-	w = { "width", 60, 800, "%.0f" }, h = { "height", 8, 60, "%.0f" },
+	w = { "width", 60, 3000, "%.0f" }, h = { "height", 8, 60, "%.0f" },
 	x = { "x", -5000, 5000, "%.1f" }, y = { "y", -5000, 5000, "%.1f" }, m = { "minimapPos", -720, 720, "%.0f" },
 }
 local CV_STR  = { p = "point", r = "relPoint" }
 local CV_BOOL = { "locked", "showQuestSegment", "showRestedSegment", "showBottomText", "showLevelingText",
 	"showTimeLeftText", "showSessionTimeText", "showBarAtMaxLevel", "hideDefaultXPBar", "autoQuest", "fontBold", "autoSaveOnClose",
-	"showBorder", "useClassColor", "hideBar", "showLevelText", "showXPText", "showPercentText", "showLevelTimeText" }
+	"showBorder", "useClassColor", "hideBar", "showLevelText", "showXPText", "showPercentText", "showLevelTimeText",
+	"segmentsUnlocked" }
 local ANCHORS = { TOP = 1, BOTTOM = 1, LEFT = 1, RIGHT = 1, CENTER = 1, TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 1, BOTTOMRIGHT = 1 }
 
 local PRESET_TO_INDEX = {}
@@ -688,17 +695,26 @@ local divRested = makeDivider(quest)
 
 local BAR_FONT = "Fonts\\FRIZQT__.TTF"
 
+-- True bold font, bundled with the addon (Fonts\CervoNeueBlack.ttf) rather
+-- than faked with outline tricks or offset-duplicated text. Cervo Neue Black
+-- itself is a paid commercial font, so the file shipped here is a free,
+-- redistributable stand-in (Archivo Black, SIL OFL) with a similarly heavy,
+-- blocky weight. If you own a Cervo Neue Black license, drop your .ttf into
+-- this addon's Fonts folder using the exact same file name to use it instead
+-- - no code changes needed.
+local BOLD_FONT = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Fonts\\CervoNeueBlack.ttf"
+
 -- Every text slot below has its own entry in db.textSizes and resizes on its
 -- own, independently of the others. FONT_SLOTS also drives the "Adjust" UI.
 local FONT_SLOTS = {
-	{ key = "onLeft",     label = "Level (on bar, left)" },
-	{ key = "onCenter",   label = "XP / Max XP (on bar, center)" },
-	{ key = "onRight",    label = "Percent (on bar, right)" },
-	{ key = "topLeft",    label = "Time This Level (above, left)" },
-	{ key = "topRight",   label = "Time This Session (above, right)" },
-	{ key = "underLeft",  label = "XP / Hour (below, left)" },
-	{ key = "underNext",  label = "Next Level ETA (below, after XP/Hour)" },
-	{ key = "underRight", label = "Completed % / Rested % (below, right)" },
+	{ key = "onLeft",     label = "Level" },
+	{ key = "onCenter",   label = "XP / Max XP" },
+	{ key = "onRight",    label = "Percent" },
+	{ key = "topLeft",    label = "Time This Level" },
+	{ key = "topRight",   label = "Time This Session" },
+	{ key = "underLeft",  label = "XP/hr" },
+	{ key = "underNext",  label = "Next Level ETA" },
+	{ key = "underRight", label = "Completed % / Rested %" },
 }
 local fontsByKey = {}
 
@@ -715,15 +731,152 @@ local SHOW_FLAG_BY_SLOT = {
 	underRight = "showBottomText",
 }
 
+-- Every text slot's default position, relative to the bar. This is both
+-- where its drag handle starts out and what "Reset Positions" restores
+-- db.segmentPos back to.
+local SEGMENT_DEFAULTS = {
+	onLeft     = { point = "LEFT",        relPoint = "LEFT",        x = 7,   y = 0  },
+	onCenter   = { point = "CENTER",      relPoint = "CENTER",      x = 0,   y = 0  },
+	onRight    = { point = "RIGHT",       relPoint = "RIGHT",       x = -7,  y = 0  },
+	topLeft    = { point = "BOTTOMLEFT",  relPoint = "TOPLEFT",     x = 1,   y = 4  },
+	topRight   = { point = "BOTTOMRIGHT", relPoint = "TOPRIGHT",    x = -1,  y = 4  },
+	underLeft  = { point = "TOPLEFT",     relPoint = "BOTTOMLEFT",  x = 1,   y = -5 },
+	underNext  = { point = "TOPLEFT",     relPoint = "BOTTOMLEFT",  x = 120, y = -5 },
+	underRight = { point = "TOPRIGHT",    relPoint = "BOTTOMRIGHT", x = -1,  y = -5 },
+}
+
+-- Normal = FRIZQT (Blizzard default) with a thin outline, unchanged.
+-- Bold = a genuinely heavier font file (see BOLD_FONT above), not a faked
+-- outline/shadow effect.
+local function activeFont()
+	return db.fontBold and BOLD_FONT or BAR_FONT
+end
+
 local function fontFlags()
-	return db.fontBold and "THICKOUTLINE" or "OUTLINE"
+	return "OUTLINE"
+end
+
+-- Each text sits on its own small handle frame anchored to the bar. The
+-- handle carries db.segmentPos's offset and becomes draggable once segment
+-- positions are unlocked - the text itself is always anchored to (0,0) on
+-- its handle, so it never has to be touched again once the handle moves.
+local segmentHandles = {}
+
+-- Level / XP-MaxXP / Percent sit ON the bar itself, so their drag handles are
+-- clamped to stay fully inside the bar's current width/height - they can
+-- never be dragged out past its edges. Everything else (above/below bar
+-- text) stays free to move anywhere.
+local ON_BAR_KEYS = { onLeft = true, onCenter = true, onRight = true }
+
+local function clampOnBarOffset(key, ox, oy)
+	if not ON_BAR_KEYS[key] then return ox, oy end
+	local def = SEGMENT_DEFAULTS[key]
+	local fs = fontsByKey[key]
+	local W = db.width or 0
+	local H = db.height or 0
+	local Wt = (fs and fs:GetStringWidth()) or 0
+	local Ht = (fs and fs:GetStringHeight()) or 0
+	if Wt <= 0 then Wt = 10 end
+	if Ht <= 0 then Ht = 10 end
+
+	local baseX
+	local allowMin, allowMax
+	if def.point == "LEFT" then
+		baseX = 0
+		allowMin, allowMax = 0, math.max(0, W - Wt)
+	elseif def.point == "CENTER" then
+		baseX = W / 2
+		allowMin, allowMax = Wt / 2, math.max(Wt / 2, W - Wt / 2)
+	else -- RIGHT
+		baseX = W
+		allowMin, allowMax = Wt, W
+	end
+	local anchorX = clamp(baseX + ox, allowMin, allowMax)
+	ox = anchorX - baseX
+
+	local maxOY = math.max(0, (H - Ht) / 2)
+	oy = clamp(oy, -maxOY, maxOY)
+
+	return ox, oy
+end
+
+local function applySegmentPos(key)
+	local def = SEGMENT_DEFAULTS[key]
+	local h = segmentHandles[key]
+	if not (def and h) then return end
+	db.segmentPos[key] = db.segmentPos[key] or { x = 0, y = 0 }
+	local off = db.segmentPos[key]
+	local ox, oy = clampOnBarOffset(key, off.x or 0, off.y or 0)
+	off.x, off.y = ox, oy
+	h:ClearAllPoints()
+	h:SetPoint(def.point, bar, def.relPoint, def.x + ox, def.y + oy)
+end
+
+local function applyAllSegmentPos()
+	for key in pairs(SEGMENT_DEFAULTS) do applySegmentPos(key) end
+end
+
+local function setSegmentsUnlocked(on)
+	db.segmentsUnlocked = on and true or false
+	for _, h in pairs(segmentHandles) do
+		h:EnableMouse(db.segmentsUnlocked)
+		h.highlight:SetShown(db.segmentsUnlocked)
+	end
+end
+
+local function resetSegmentPositions()
+	for key in pairs(SEGMENT_DEFAULTS) do
+		db.segmentPos[key] = { x = 0, y = 0 }
+	end
+	applyAllSegmentPos()
+end
+
+local function makeSegmentHandle(key)
+	local h = CreateFrame("Frame", nil, bar)
+	h:SetSize(140, 22)
+	h:EnableMouse(false)
+
+	local hl = h:CreateTexture(nil, "OVERLAY")
+	hl:SetAllPoints(h)
+	hl:SetColorTexture(0.25, 0.85, 1, 0.20)
+	hl:Hide()
+	h.highlight = hl
+
+	h:SetScript("OnMouseDown", function(self, btn)
+		if btn ~= "LeftButton" or not db.segmentsUnlocked then return end
+		self.dragging = true
+		self.startCX, self.startCY = GetCursorPosition()
+		local off = (db.segmentPos and db.segmentPos[key]) or {}
+		self.startOffX, self.startOffY = off.x or 0, off.y or 0
+	end)
+	h:SetScript("OnMouseUp", function(self) self.dragging = false end)
+	h:SetScript("OnHide", function(self) self.dragging = false end)
+	h:SetScript("OnUpdate", function(self)
+		if not self.dragging then return end
+		local scale = self:GetEffectiveScale()
+		local cx, cy = GetCursorPosition()
+		local dx = (cx - self.startCX) / scale
+		local dy = (cy - self.startCY) / scale
+		local ox, oy = clampOnBarOffset(key, self.startOffX + dx, self.startOffY + dy)
+		db.segmentPos[key] = db.segmentPos[key] or {}
+		db.segmentPos[key].x = ox
+		db.segmentPos[key].y = oy
+		applySegmentPos(key)
+	end)
+
+	segmentHandles[key] = h
+	return h
+end
+
+for _, slot in ipairs(FONT_SLOTS) do
+	makeSegmentHandle(slot.key)
 end
 
 -- Every on/off-bar text is built through this one function now, keyed to its
 -- own db.textSizes entry so each can be resized separately from the others.
 local function resizableFont(parent, key)
 	local fs = parent:CreateFontString(nil, "OVERLAY")
-	fs:SetFont(BAR_FONT, (db.textSizes and db.textSizes[key]) or 11, fontFlags())
+	fs:SetFont(activeFont(), (db.textSizes and db.textSizes[key]) or 11, fontFlags())
 	fs:SetTextColor(1, 1, 1, 1)
 	fs:SetShadowColor(0, 0, 0, 0.8)
 	fs:SetShadowOffset(1, -1)
@@ -732,50 +885,53 @@ local function resizableFont(parent, key)
 end
 
 local function applyFonts()
+	local font = activeFont()
 	local flags = fontFlags()
 	for _, slot in ipairs(FONT_SLOTS) do
 		local fs = fontsByKey[slot.key]
+		local size = clamp((db.textSizes and db.textSizes[slot.key]) or 11, 8, 24)
 		if fs then
-			local size = clamp((db.textSizes and db.textSizes[slot.key]) or 11, 8, 24)
-			fs:SetFont(BAR_FONT, size, flags)
+			fs:SetFont(font, size, flags)
 		end
 	end
 end
 
 -- ON BAR TEXT
-local onLeftText = resizableFont(bar, "onLeft")
-onLeftText:SetPoint("LEFT", bar, "LEFT", 7, 0)
+local onLeftText = resizableFont(segmentHandles.onLeft, "onLeft")
+onLeftText:SetPoint("LEFT", segmentHandles.onLeft, "LEFT", 0, 0)
 onLeftText:SetJustifyH("LEFT")
 
-local onCenterText = resizableFont(bar, "onCenter")
-onCenterText:SetPoint("CENTER", bar, "CENTER", 0, 0)
+local onCenterText = resizableFont(segmentHandles.onCenter, "onCenter")
+onCenterText:SetPoint("CENTER", segmentHandles.onCenter, "CENTER", 0, 0)
 
-local onRightText = resizableFont(bar, "onRight")
-onRightText:SetPoint("RIGHT", bar, "RIGHT", -7, 0)
+local onRightText = resizableFont(segmentHandles.onRight, "onRight")
+onRightText:SetPoint("RIGHT", segmentHandles.onRight, "RIGHT", 0, 0)
 onRightText:SetJustifyH("RIGHT")
 
 -- ABOVE BAR TEXT (outside, Luxthos-style)
-local topLeftText = resizableFont(bar, "topLeft")
-topLeftText:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", 1, 4)
+local topLeftText = resizableFont(segmentHandles.topLeft, "topLeft")
+topLeftText:SetPoint("BOTTOMLEFT", segmentHandles.topLeft, "BOTTOMLEFT", 0, 0)
 topLeftText:SetJustifyH("LEFT")
 
-local topRightText = resizableFont(bar, "topRight")
-topRightText:SetPoint("BOTTOMRIGHT", bar, "TOPRIGHT", -1, 4)
+local topRightText = resizableFont(segmentHandles.topRight, "topRight")
+topRightText:SetPoint("BOTTOMRIGHT", segmentHandles.topRight, "BOTTOMRIGHT", 0, 0)
 topRightText:SetJustifyH("RIGHT")
 
 -- UNDER BAR TEXT
-local underLeftText = resizableFont(bar, "underLeft")
-underLeftText:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 1, -5)
+local underLeftText = resizableFont(segmentHandles.underLeft, "underLeft")
+underLeftText:SetPoint("TOPLEFT", segmentHandles.underLeft, "TOPLEFT", 0, 0)
 underLeftText:SetJustifyH("LEFT")
 
--- Next LVL ETA now lives under the bar, right after the XP/Hour text
-local underNextLvlText = resizableFont(bar, "underNext")
-underNextLvlText:SetPoint("LEFT", underLeftText, "RIGHT", 6, 0)
+-- Next LVL ETA - independently movable; defaults to just after the XP/hr text
+local underNextLvlText = resizableFont(segmentHandles.underNext, "underNext")
+underNextLvlText:SetPoint("TOPLEFT", segmentHandles.underNext, "TOPLEFT", 0, 0)
 underNextLvlText:SetJustifyH("LEFT")
 
-local underRightText = resizableFont(bar, "underRight")
-underRightText:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", -1, -5)
+local underRightText = resizableFont(segmentHandles.underRight, "underRight")
+underRightText:SetPoint("TOPRIGHT", segmentHandles.underRight, "TOPRIGHT", 0, 0)
 underRightText:SetJustifyH("RIGHT")
+
+applyAllSegmentPos()
 
 --------------------------------------------------------------------
 -- 7. Update logic
@@ -878,12 +1034,12 @@ update = function()
 
 	-- UNDER BAR TEXT POPULATION
 	if db.showLevelingText then
-		underLeftText:SetText(xpPerHour and (formatXPAmount(xpPerHour) .. " XP/Hour") or "-- XP/Hour")
+		underLeftText:SetText(xpPerHour and (formatXPAmount(xpPerHour) .. " XP/hr") or "-- XP/hr")
 	else
 		underLeftText:SetText("")
 	end
 
-	-- Next LVL ETA - sits right after XP/Hour, under the bar
+	-- Next LVL ETA - sits right after XP/hr, under the bar
 	local etaStr = ""
 	if db.showTimeLeftText and xpPerHour and xpPerHour > 0 then
 		local xpLeft = math.max(0, xpMax - xp)
@@ -927,6 +1083,7 @@ relayout = function()
 	paintSegments()
 	paintBorder()
 	applyFonts()
+	applyAllSegmentPos()
 	update()
 end
 
@@ -1171,7 +1328,7 @@ end
 local function buildOptions()
 	resolveTheme()
 	local T = theme
-	local PANEL_W, PANEL_H = 340, 404 
+	local PANEL_W, PANEL_H = 340, 506 
 	local CONTENT_W = PANEL_W - 24
 	local TRACK_W = CONTENT_W - 4
 
@@ -1194,7 +1351,7 @@ local function buildOptions()
 	head:SetHeight(26)
 	head:SetColorTexture(T.box[1], T.box[2], T.box[3], 1)
 
-	local title = label(panel, hex(T.value) .. "XP|r Bar  " .. hex(T.dim) .. "0.5.4|r", 13)
+	local title = label(panel, hex(T.value) .. "XP|r Bar  " .. hex(T.dim) .. "0.6.0|r", 13)
 	title:SetPoint("LEFT", head, "LEFT", 10, 0)
 
 	local closeBtn = newBox(panel, T.bg, T.border, "Button")
@@ -1465,9 +1622,6 @@ local function buildOptions()
 		function() return db.hideDefaultXPBar end,
 		function(v) db.hideDefaultXPBar = v and true or false end,
 		function() applyHideDefaultXP() end)
-	addCheck(sbar, "Lock Bar (no dragging)",
-		function() return db.locked end,
-		function(v) db.locked = v and true or false end)
 	addCheck(sbar, "Auto Accept/Turn-in (Hold Shift to pause)",
 		function() return db.autoQuest end,
 		function(v) db.autoQuest = v and true or false end)
@@ -1544,6 +1698,36 @@ local function buildOptions()
 
 	-- 8 independent text-size sliders plus bar width/height would overflow the
 	-- panel in one page, so Adjust has its own small set of inner sub-tabs.
+	-- Lock Bar / Unlock Segment Positions / Reset live at the top of Adjust,
+	-- above the sub-tabs, so they stay visible no matter which sub-tab
+	-- (Bar Size / Inside Bar / Outside Bar) is open.
+	local topStack = newStack(adjustPage)
+	addChoice(topStack, "Text Style", {
+		{ text = "Normal", value = false },
+		{ text = "Bold", value = true },
+	}, function() return db.fontBold end, function(v) db.fontBold = v end)
+	addCheck(topStack, "Lock Bar (no dragging)",
+		function() return db.locked end,
+		function(v) db.locked = v and true or false end)
+	addCheck(topStack, "Unlock Segment Positions (drag text to move)",
+		function() return db.segmentsUnlocked end,
+		function(v) setSegmentsUnlocked(v) end)
+	do
+		local resetBtn = newBox(topStack.page, T.box, T.border, "Button")
+		resetBtn:SetSize(CONTENT_W, 22)
+		resetBtn:SetPoint("TOPLEFT", topStack.page, "TOPLEFT", 0, topStack.y)
+		local resetText = label(resetBtn, "Reset Segment Positions to Default", 12)
+		resetText:SetPoint("CENTER", 0, 0)
+		resetBtn:SetScript("OnClick", function()
+			resetSegmentPositions()
+			printMsg("segment positions reset to default.")
+		end)
+		resetBtn:SetScript("OnEnter", function() setBorder(resetBtn, T.value) end)
+		resetBtn:SetScript("OnLeave", function() setBorder(resetBtn, T.border) end)
+		topStack.y = topStack.y - 26
+	end
+	local SUBTABS_Y = topStack.y - 4
+
 	local subPages, subTabs = {}, {}
 	local function switchSubTab(key)
 		for k, p in pairs(subPages) do p:SetShown(k == key) end
@@ -1555,63 +1739,60 @@ local function buildOptions()
 		end
 	end
 	local SUB_TABS = {
-		{ key = "size",   text = "Bar Size" },
-		{ key = "onbar",  text = "On-Bar Text" },
-		{ key = "offbar", text = "Off-Bar Text" },
+		{ key = "size",    text = "Bar Size" },
+		{ key = "inside",  text = "Inside Bar" },
+		{ key = "outside", text = "Outside Bar" },
 	}
 	local subW = (CONTENT_W - (#SUB_TABS - 1) * 4) / #SUB_TABS
+	local subPageH = (PANEL_H - 74) + (SUBTABS_Y - 28)
 	for i, t in ipairs(SUB_TABS) do
 		local b = newBox(adjustPage, T.box, T.border, "Button")
 		b:SetSize(subW, 20)
-		b:SetPoint("TOPLEFT", adjustPage, "TOPLEFT", (i - 1) * (subW + 4), 0)
+		b:SetPoint("TOPLEFT", adjustPage, "TOPLEFT", (i - 1) * (subW + 4), SUBTABS_Y)
 		b.text = label(b, t.text, 11)
 		b.text:SetPoint("CENTER", 0, 0)
 		b:SetScript("OnClick", function() switchSubTab(t.key) end)
 		subTabs[t.key] = b
 
 		local p = CreateFrame("Frame", nil, adjustPage)
-		p:SetPoint("TOPLEFT", adjustPage, "TOPLEFT", 0, -28)
-		p:SetSize(CONTENT_W, PANEL_H - 74 - 28)
+		p:SetPoint("TOPLEFT", adjustPage, "TOPLEFT", 0, SUBTABS_Y - 28)
+		p:SetSize(CONTENT_W, subPageH)
 		p:Hide()
 		subPages[t.key] = p
 	end
 
 	local ssize = newStack(subPages.size)
 	addHeader(ssize, "Bar")
-	addSlider(ssize, "Bar Width", 60, 800,
+	addSlider(ssize, "Bar Width", 60, 3000,
 		function() return db.width end,
 		function(v) db.width = v end)
 	addSlider(ssize, "Bar Height", 8, 60,
 		function() return db.height end,
 		function(v) db.height = v end)
-	addChoice(ssize, "Text Style", {
-		{ text = "Normal", value = false },
-		{ text = "Bold", value = true },
-	}, function() return db.fontBold end, function(v) db.fontBold = v end)
-	local sizeHint = label(ssize.page, "Bold = thick outline. Mouse wheel on a slider = fine tune (Shift = x10).", 10, T.dim)
+	local sizeHint = label(ssize.page, "Mouse wheel on a slider = fine tune (Shift = x10).", 10, T.dim)
 	sizeHint:SetPoint("TOPLEFT", ssize.page, "TOPLEFT", 2, ssize.y - 4)
 	sizeHint:SetWidth(CONTENT_W - 4)
 	sizeHint:SetJustifyH("LEFT")
 
-	local sonbar = newStack(subPages.onbar)
-	addHeader(sonbar, "Text drawn on the bar itself")
+	local sinside = newStack(subPages.inside)
+	addHeader(sinside, "Text drawn on the bar itself")
 	for _, slot in ipairs(FONT_SLOTS) do
 		if slot.key == "onLeft" or slot.key == "onCenter" or slot.key == "onRight" then
-			addSlider(sonbar, slot.label, 8, 24,
+			addSlider(sinside, slot.label, 8, 24,
 				function() return db.textSizes[slot.key] end,
 				function(v) db.textSizes[slot.key] = v end)
 		end
 	end
-	local onbarHint = label(sonbar.page, "Each size here is independent - resizing one does not affect the others.", 10, T.dim)
-	onbarHint:SetPoint("TOPLEFT", sonbar.page, "TOPLEFT", 2, sonbar.y - 4)
-	onbarHint:SetWidth(CONTENT_W - 4)
-	onbarHint:SetJustifyH("LEFT")
+	local insideHint = label(sinside.page, "Each size here is independent - resizing one does not affect the others.", 10, T.dim)
+	insideHint:SetPoint("TOPLEFT", sinside.page, "TOPLEFT", 2, sinside.y - 4)
+	insideHint:SetWidth(CONTENT_W - 4)
+	insideHint:SetJustifyH("LEFT")
 
-	local soffbar = newStack(subPages.offbar)
-	addHeader(soffbar, "Text above / below the bar")
+	local soutside = newStack(subPages.outside)
+	addHeader(soutside, "Text above / below the bar")
 	for _, slot in ipairs(FONT_SLOTS) do
 		if slot.key ~= "onLeft" and slot.key ~= "onCenter" and slot.key ~= "onRight" then
-			addSlider(soffbar, slot.label, 8, 24,
+			addSlider(soutside, slot.label, 8, 24,
 				function() return db.textSizes[slot.key] end,
 				function(v) db.textSizes[slot.key] = v end)
 		end
@@ -1637,7 +1818,7 @@ local function buildOptions()
 		hex(T.value) .. "Bar text|r",
 		"ABOVE BAR: Time this level (Left) | Time this session (Right)",
 		"ON BAR: Level (Left) | XP / Max (Center) | % (Right)",
-		"UNDER BAR: XP/Hour + Next LVL ETA (Left) | Completed/Rested (Right)",
+		"UNDER BAR: XP/hr + Next LVL ETA (Left) | Completed/Rested (Right)",
 		"Every element above can be shown/hidden - Options > Bar Text.",
 		"Every text size adjusts independently - see the Adjust tab.",
 		"",
@@ -1817,6 +1998,17 @@ SlashCmdList["FOREVERXP"] = function(msg)
 		db.locked = false
 		refreshOptions()
 		printMsg("unlocked - drag to move.")
+	elseif cmd == "segmentsunlock" then
+		setSegmentsUnlocked(true)
+		refreshOptions()
+		printMsg("segment positions unlocked - drag any text to move it.")
+	elseif cmd == "segmentslock" then
+		setSegmentsUnlocked(false)
+		refreshOptions()
+		printMsg("segment positions locked.")
+	elseif cmd == "resetsegments" then
+		resetSegmentPositions()
+		printMsg("segment positions reset to default.")
 	elseif cmd == "quest" then
 		db.showQuestSegment = on
 		relayout(); refreshOptions()
@@ -1890,7 +2082,7 @@ SlashCmdList["FOREVERXP"] = function(msg)
 	elseif cmd == "centersize" and tonumber(arg) then
 		db.textSizes.onCenter = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
 		relayout(); refreshOptions()
-		printMsg("XP / Max XP (on bar, center) size set to " .. db.textSizes.onCenter)
+		printMsg("XP / Max XP size set to " .. db.textSizes.onCenter)
 	elseif cmd == "etasize" and tonumber(arg) then
 		db.textSizes.underNext = clamp(math.floor(tonumber(arg) + 0.5), 8, 24)
 		relayout(); refreshOptions()
@@ -1900,7 +2092,7 @@ SlashCmdList["FOREVERXP"] = function(msg)
 		relayout(); refreshOptions()
 		printMsg("Completed/Rested size set to " .. db.textSizes.underRight)
 	elseif cmd == "width" and tonumber(arg) then
-		db.width = clamp(math.floor(tonumber(arg) + 0.5), 60, 800)
+		db.width = clamp(math.floor(tonumber(arg) + 0.5), 60, 3000)
 		relayout(); refreshOptions()
 		printMsg("width set to " .. db.width)
 	elseif cmd == "height" and tonumber(arg) then
@@ -1913,7 +2105,7 @@ SlashCmdList["FOREVERXP"] = function(msg)
 		relayout(); refreshOptions()
 		printMsg("position and size reset.")
 	else
-		printMsg("commands (/fxp or /foreverxp): menu | show | hide | toggle | lock | unlock | quest | rested | text | leveling | leveltext | xptext | pcttext | leveltime | session | timeleft | maxlevel | hideblizzard | autoquest (on/off) | bold (on/off) | fontsize <n> | centersize <n> | etasize <n> | bottomsize <n> | width <n> | height <n> | reset")
+		printMsg("commands (/fxp or /foreverxp): menu | show | hide | toggle | lock | unlock | segmentsunlock | segmentslock | resetsegments | quest | rested | text | leveling | leveltext | xptext | pcttext | leveltime | session | timeleft | maxlevel | hideblizzard | autoquest (on/off) | bold (on/off) | fontsize <n> | centersize <n> | etasize <n> | bottomsize <n> | width <n> | height <n> | reset")
 	end
 end
 
