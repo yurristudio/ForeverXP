@@ -1,3 +1,24 @@
+# ForeverXP 0.6.0 — Changelog
+
+## Bar Text Labels
+* Removed all the "(on bar, left)" / "(above, right)" style hints from every text-element label. 
+* **Options → Bar Text** and the Adjust sliders now simply say "Level", "XP / Max XP", "Percent", etc.
+
+## Movable Segments
+* **Inside Bar Clamping:** Level, XP / Max XP, and Percent (the three texts drawn directly on the bar) can no longer be dragged outside the bar. They are now clamped to the bar's current width/height, and will stay clamped if you resize the bar afterward.
+* **Outside Bar Freedom:** Text above/below the bar (Time this level, Time this session, XP/hr, Next LVL ETA, Completed/Rested) is unaffected and still moves freely.
+
+## Adjust Tab Restructured
+* **Sub-tabs Renamed:** *On-Bar Text* is now **Inside Bar**, and *Off-Bar Text* is now **Outside Bar** (*Bar Size* remains unchanged).
+* **Shared Controls:** *Lock Bar*, *Unlock Segment Positions*, and *Reset Segment Positions to Default* have been moved out of **Options → Bar** and placed at the top of the Adjust tab. They are now visible above all three sub-tabs, regardless of which one is open.
+* **Persistent Text Style:** *Text Style* (Normal/Bold) was also moved to the shared top area, ensuring it no longer resets or hides when switching between Bar Size, Inside Bar, or Outside Bar.
+* **Panel Resize:** The settings panel was made taller (from 404px to 506px) to comfortably fit the extra controls without crowding the sliders.
+
+## Bold Text Improvements
+* **True Bold Font:** Bold is now a real font swap rather than a faked effect. The old approach (using `THICKOUTLINE` with 4-directional offset copies) has been completely removed.
+* **Cervo Neue Black Support:** You can now drop a licensed `Cervo Neue Black.ttf` into the addon's Fonts folder (named as `CervoNeueBlack.ttf`) and the Bold setting will use it automatically.
+* **New Default Bold:** The addon now ships by default with **Archivo Black** (a free, SIL Open Font License font). This acts as a stand-in with a similarly heavy weight, since Cervo Neue Black is a paid commercial font and cannot be redistributed.
+
 # ForeverXP v0.5.4
 
 ## Layout changes
