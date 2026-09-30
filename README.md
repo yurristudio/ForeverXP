@@ -1,3 +1,40 @@
+# ForeverXP Bar 0.6.1 — Changelog
+
+## Renamed to avoid a clash with another addon
+Another addon called **ForeverXP** exists on CurseForge with the same folder,
+file names, saved variables and slash command. Installing one replaced the
+other, and uninstalling one deleted the other. Every identifier is now unique.
+No features changed (one default changed, see below).
+
+* **Name:** ForeverXP -> **ForeverXP Bar** (folder and IDs: `ForeverXPBar`).
+* **Files:** `ForeverXPBar.toc`, `ForeverXPBar.lua`.
+* **Slash commands:** `/fxp` and `/foreverxp` -> `/fxpb` and `/foreverxpbar`
+  (all sub-commands unchanged, e.g. `/fxpb menu`, `/fxpb width 300`).
+* **Saved variables:** `ForeverXPDB` / `ForeverXPCharDB` -> `ForeverXPBarDB` / `ForeverXPBarCharDB`.
+* **Frames, minimap button, CVar and macro names** renamed to `ForeverXPBar...`.
+
+### Default changes
+* **Hide Default Experience Bar is ON by default**, so Blizzard's bar is hidden
+  from the first login. It can still be turned off in the Options tab or with
+  `/fxpb hideblizzard off`.
+* **Default bar size is now 660 x 34** (width range 60-3000, height range 8-60).
+  Position is unchanged.
+* **One-time update of saved settings:** copies saved by an earlier 0.6.1 test
+  build are moved to these new defaults once (hidden Blizzard bar, 660 x 34).
+  After that your own changes are kept as usual.
+
+### Upgrading
+1. Quit the game completely (a `/reload` is not enough).
+2. Delete `Interface/AddOns/ForeverXP/` **only if it is this addon**. If it is
+   the other author's ForeverXP, leave it alone.
+3. Put the new `ForeverXPBar` folder (with `ForeverXPBar.toc`, `ForeverXPBar.lua`
+   and the `Fonts` folder) into `Interface/AddOns/`.
+4. Log in. Settings start from defaults, because the saved variables have a
+   new name.
+5. Optional: delete the unused macro `ForeverXPData` in `/macro` if present.
+
+---
+
 # ForeverXP 0.6.0 — Changelog
 
 ## Bar Text Labels
